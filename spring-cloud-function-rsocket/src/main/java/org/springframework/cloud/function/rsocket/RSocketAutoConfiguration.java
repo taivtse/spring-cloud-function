@@ -88,9 +88,10 @@ public class RSocketAutoConfiguration {
 				@SuppressWarnings("unchecked")
 				@Override
 				public Mono<Payload> requestResponse(Payload payload) {
-					Object result = invokeFunction(payload, function);
-					Mono<Payload> invocationResult = ((Mono<Message<byte[]>>) result).map(message -> DefaultPayload.create(message.getPayload()));
-					return invocationResult;
+					Message<byte[]> inputMessage = deserealizePayload(payload);
+					Object rawResult = function.apply(inputMessage);
+					Mono<Message<byte[]>> result = rawResult instanceof Mono ? (Mono<Message<byte[]>>) rawResult : Mono.just((Message<byte[]>) rawResult);
+					return result.map(message -> DefaultPayload.create(message.getPayload()));
 				}
 			};
 		}
@@ -98,29 +99,14 @@ public class RSocketAutoConfiguration {
 			if (logger.isDebugEnabled()) {
 				logger.debug("Mapping function '" + definition + "' as RSocket `requestChannel`.");
 			}
-			clientRSocket = new RSocket() { // imperative function or Function<?, Mono> = requestResponse
+			clientRSocket = new RSocket() {
 				@SuppressWarnings("unchecked")
 				@Override
 				public Flux<Payload> requestChannel(Publisher<Payload> payloads) {
-					return Flux.from(payloads).transform(flux -> {
-						return flux.map(payload -> {
-							ByteBuffer buffer = payload.getData();
-							byte[] rawData = new byte[buffer.remaining()];
-							buffer.get(rawData);
-							if (payload.hasMetadata()) {
-								String metadata = payload.getMetadataUtf8(); // TODO see what to do with it
-							}
-							Message<byte[]> inputMessage = MessageBuilder.withPayload(rawData).build();
-							return inputMessage;
-						});
-					})
-					.transform(function)
-					.transform(resultFlux -> {
-						return ((Flux<Message<byte[]>>) resultFlux).map(message -> {
-							Payload p = DefaultPayload.create(message.getPayload());
-							return p;
-						});
-					});
+					return Flux.from(payloads)
+						.transform(inputFlux -> inputFlux.map(payload -> deserealizePayload(payload)))
+						.transform(function)
+						.transform(outputFlux -> ((Flux<Message<byte[]>>) outputFlux).map(message -> DefaultPayload.create(message.getPayload())));
 				}
 			};
 		}
@@ -132,16 +118,17 @@ public class RSocketAutoConfiguration {
 	}
 
 	@SuppressWarnings("unchecked")
-	private static Mono<Message<byte[]>> invokeFunction(Payload p, Function<Message<byte[]>, Mono<Message<byte[]>>> function) {
-		ByteBuffer buffer = p.getData();
+	private static Message<byte[]> deserealizePayload(Payload payload) {
+		ByteBuffer buffer = payload.getData();
 		byte[] rawData = new byte[buffer.remaining()];
 		buffer.get(rawData);
-		if (p.hasMetadata()) {
-			String metadata = p.getMetadataUtf8(); // TODO see what to do with it
+		if (payload.hasMetadata()) {
+			String metadata = payload.getMetadataUtf8(); // TODO see what to do with it
 		}
 		Message<byte[]> inputMessage = MessageBuilder.withPayload(rawData).build();
-		Object result = function.apply(inputMessage);
-		return result instanceof Mono ? (Mono<Message<byte[]>>) result : Mono.just((Message<byte[]>) result);
+		return inputMessage;
+//		Object result = function.apply(inputMessage);
+//		return result instanceof Mono ? (Mono<Message<byte[]>>) result : Mono.just((Message<byte[]>) result);
 	}
 
 	private static boolean isFireAndForget(Type functionType) {
