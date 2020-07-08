@@ -16,26 +16,19 @@
 
 package org.springframework.cloud.function.rsocket;
 
-import java.time.Duration;
+import java.net.InetSocketAddress;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
 import io.rsocket.Payload;
 import io.rsocket.RSocket;
-import io.rsocket.core.RSocketConnector;
-import io.rsocket.transport.netty.client.TcpClientTransport;
 import io.rsocket.util.DefaultPayload;
-
-import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
-import reactor.util.retry.Retry;
 
-import org.springframework.boot.SpringApplication;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.builder.SpringApplicationBuilder;
@@ -60,8 +53,7 @@ public class RSocketAutoConfigurationTests {
 				"--spring.cloud.function.rsocket.bind-address=localhost",
 				"--spring.cloud.function.rsocket.bind-port=" + port);
 
-		RSocket socket = RSocketConnector.connectWith(TcpClientTransport.create("localhost", port)).log()
-				.retryWhen(Retry.backoff(5, Duration.ofSeconds(1))).block();
+		RSocket socket = RSocketConnectionUtils.createClientSocket(InetSocketAddress.createUnresolved("localhost", port), null);
 		Mono<String> result = socket.requestResponse(DefaultPayload.create("\"hello\"")).map(Payload::getDataUtf8);
 
 		StepVerifier
@@ -88,8 +80,7 @@ public class RSocketAutoConfigurationTests {
 				"--spring.cloud.function.rsocket.target-address=localhost",
 				"--spring.cloud.function.rsocket.target-port=" + portA);
 
-		RSocket socket = RSocketConnector.connectWith(TcpClientTransport.create("localhost", portB)).log()
-				.retryWhen(Retry.backoff(5, Duration.ofSeconds(1))).block();
+		RSocket socket = RSocketConnectionUtils.createClientSocket(InetSocketAddress.createUnresolved("localhost", portB), null);
 		Mono<String> result = socket.requestResponse(DefaultPayload.create("\"hello\"")).map(Payload::getDataUtf8);
 		StepVerifier
 		  .create(result)
@@ -107,8 +98,7 @@ public class RSocketAutoConfigurationTests {
 				"--spring.cloud.function.rsocket.bind-address=localhost",
 				"--spring.cloud.function.rsocket.bind-port=" + port);
 
-		RSocket socket = RSocketConnector.connectWith(TcpClientTransport.create("localhost", port)).log()
-				.retryWhen(Retry.backoff(5, Duration.ofSeconds(1))).block();
+		RSocket socket = RSocketConnectionUtils.createClientSocket(InetSocketAddress.createUnresolved("localhost", port), null);
 		Flux<String> result = socket.requestChannel(Flux.just(
 				DefaultPayload.create("\"Ricky\""),
 				DefaultPayload.create("\"Julien\""),

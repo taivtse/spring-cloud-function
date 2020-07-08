@@ -17,6 +17,7 @@
 package org.springframework.cloud.function.rsocket;
 
 import java.lang.reflect.Type;
+import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.util.function.Function;
 
@@ -30,9 +31,11 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.reactivestreams.Publisher;
 
+import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.InitializingBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.cloud.function.context.FunctionCatalog;
@@ -55,6 +58,13 @@ import org.springframework.util.StringUtils;
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties({FunctionProperties.class, RSocketFunctionProperties.class})
 public class RSocketAutoConfiguration {
+
+	private static String splash = "   ____         _             _______             __  ____              __  _             ___  ____         __       __ \n" +
+			"  / __/__  ____(_)__  ___ _  / ___/ /__  __ _____/ / / __/_ _____  ____/ /_(_)__  ___    / _ \\/ __/__  ____/ /_____ / /_\n" +
+			" _\\ \\/ _ \\/ __/ / _ \\/ _ `/ / /__/ / _ \\/ // / _  / / _// // / _ \\/ __/ __/ / _ \\/ _ \\  / , _/\\ \\/ _ \\/ __/  '_/ -_) __/\n" +
+			"/___/ .__/_/ /_/_//_/\\_, /  \\___/_/\\___/\\_,_/\\_,_/ /_/  \\_,_/_//_/\\__/\\__/_/\\___/_//_/ /_/|_/___/\\___/\\__/_/\\_\\\\__/\\__/ \n" +
+			"   /_/              /___/                                                                                               \n" +
+			"";
 
 	private static Log logger = LogFactory.getLog(RSocketAutoConfiguration.class);
 
@@ -151,13 +161,15 @@ public class RSocketAutoConfiguration {
 	/**
 	 *
 	 */
-	private static class FunctionToDestinationBinder implements InitializingBean {
+	private static class FunctionToDestinationBinder implements InitializingBean, DisposableBean {
 
 		private final FunctionCatalog functionCatalog;
 
 		private final FunctionProperties functionProperties;
 
 		private final RSocketFunctionProperties rSocketFunctionProperties;
+
+		private Disposable rsocketConnection;
 
 		FunctionToDestinationBinder(FunctionCatalog functionCatalog, FunctionProperties functionProperties,
 				RSocketFunctionProperties rSocketFunctionProperties) {
@@ -182,10 +194,24 @@ public class RSocketAutoConfiguration {
 
 			Type functionType = function.getFunctionType();
 			RSocket rsocket = buildRSocket(definition, functionType, invocableFunction);
-			RSocketServer.create(SocketAcceptor.with(rsocket))
-				.bind(TcpServerTransport.create(this.rSocketFunctionProperties.getBindAddress(), this.rSocketFunctionProperties.getBindPort()))
-				.subscribe(); // TODO do we need to close/dispose etc?
+			this.rsocketConnection = RSocketConnectionUtils.createServerSocket(rsocket,
+					InetSocketAddress.createUnresolved(this.rSocketFunctionProperties.getBindAddress(), this.rSocketFunctionProperties.getBindPort()));
+			this.printSplashScreen(definition);
 		}
 
+		@Override
+		public void destroy() throws Exception {
+			if (this.rsocketConnection != null) {
+				this.rsocketConnection.dispose();
+			}
+		}
+
+		private void printSplashScreen(String definition) {
+			System.out.println(splash);
+			System.out.println("Function Definition: " + definition);
+			System.out.println("RSocket Bind Address: " + this.rSocketFunctionProperties.getBindAddress());
+			System.out.println("RSocket Bind Port: " + this.rSocketFunctionProperties.getBindPort());
+			System.out.println("======================================================\n");
+		}
 	}
 }

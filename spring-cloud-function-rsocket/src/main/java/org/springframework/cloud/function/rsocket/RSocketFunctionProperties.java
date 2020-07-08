@@ -29,9 +29,9 @@ import org.springframework.cloud.function.context.FunctionProperties;
 @ConfigurationProperties(prefix = FunctionProperties.PREFIX + ".rsocket")
 public class RSocketFunctionProperties {
 
-	private String bindAddress;
+	private String bindAddress = "localhost";
 
-	private int bindPort;
+	private int bindPort = 55555;
 
 	private String targetAddress;
 
