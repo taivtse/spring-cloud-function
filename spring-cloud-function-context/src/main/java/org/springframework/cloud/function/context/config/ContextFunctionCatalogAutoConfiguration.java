@@ -34,7 +34,6 @@ import org.springframework.cloud.function.context.FunctionCatalog;
 import org.springframework.cloud.function.context.FunctionProperties;
 import org.springframework.cloud.function.context.FunctionRegistry;
 import org.springframework.cloud.function.context.catalog.BeanFactoryAwareFunctionRegistry;
-import org.springframework.cloud.function.context.catalog.FunctionInspector;
 import org.springframework.cloud.function.json.GsonMapper;
 import org.springframework.cloud.function.json.JacksonMapper;
 import org.springframework.cloud.function.json.JsonMapper;
@@ -101,20 +100,24 @@ public class ContextFunctionCatalogAutoConfiguration {
 									: converter;
 				})
 				.collect(Collectors.toList());
-		mcList.add(NegotiatingMessageConverterWrapper.wrap(new JsonMessageConverter(jsonMapper)));
-		mcList.add(NegotiatingMessageConverterWrapper.wrap(new ByteArrayMessageConverter()));
-		mcList.add(NegotiatingMessageConverterWrapper.wrap(new StringMessageConverter()));
+//		mcList.add(NegotiatingMessageConverterWrapper.wrap(new JsonMessageConverter(jsonMapper)));
+//		mcList.add(NegotiatingMessageConverterWrapper.wrap(new ByteArrayMessageConverter()));
+//		mcList.add(NegotiatingMessageConverterWrapper.wrap(new StringMessageConverter()));
+
+		mcList.add(new JsonMessageConverter(jsonMapper));
+		mcList.add(new ByteArrayMessageConverter());
+		mcList.add(new StringMessageConverter());
 
 		if (!CollectionUtils.isEmpty(mcList)) {
 			messageConverter = new CompositeMessageConverter(mcList);
 		}
 
-		return new BeanFactoryAwareFunctionRegistry(conversionService, messageConverter);
+		return new BeanFactoryAwareFunctionRegistry(conversionService, messageConverter, jsonMapper);
 	}
 
 	@Bean(RoutingFunction.FUNCTION_NAME)
-	RoutingFunction functionRouter(FunctionCatalog functionCatalog, FunctionInspector functionInspector, FunctionProperties functionProperties) {
-		return new RoutingFunction(functionCatalog, functionInspector, functionProperties);
+	RoutingFunction functionRouter(FunctionCatalog functionCatalog, FunctionProperties functionProperties) {
+		return new RoutingFunction(functionCatalog, functionProperties);
 	}
 
 	private boolean isConverterEligible(Object messageConverter) {

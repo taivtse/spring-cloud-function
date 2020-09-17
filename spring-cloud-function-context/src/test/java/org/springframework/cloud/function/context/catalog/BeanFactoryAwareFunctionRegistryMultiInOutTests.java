@@ -55,6 +55,7 @@ import org.springframework.util.MimeTypeUtils;
  * @author Oleg Zhurakousky
  *
  */
+@Disabled
 public class BeanFactoryAwareFunctionRegistryMultiInOutTests {
 
 	private FunctionCatalog configureCatalog() {

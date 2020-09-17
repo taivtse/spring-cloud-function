@@ -1,511 +1,289 @@
-/*
- * Copyright 2020-2020 the original author or authors.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *      https://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package org.springframework.cloud.function.context.catalog;
 
 import java.lang.reflect.Field;
-import java.lang.reflect.GenericArrayType;
-import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.Iterator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.TreeSet;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
-import org.aopalliance.intercept.MethodInterceptor;
-import org.aopalliance.intercept.MethodInvocation;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.reactivestreams.Publisher;
-import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
-import reactor.util.function.Tuples;
-
-import org.springframework.aop.framework.ProxyFactory;
 import org.springframework.beans.factory.BeanFactory;
-import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cloud.function.context.FunctionCatalog;
 import org.springframework.cloud.function.context.FunctionProperties;
 import org.springframework.cloud.function.context.FunctionRegistration;
 import org.springframework.cloud.function.context.FunctionRegistry;
 import org.springframework.cloud.function.context.config.RoutingFunction;
 import org.springframework.cloud.function.json.JsonMapper;
+import org.springframework.core.ResolvableType;
 import org.springframework.core.convert.ConversionService;
-import org.springframework.expression.Expression;
-import org.springframework.expression.spel.standard.SpelExpressionParser;
-import org.springframework.lang.Nullable;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageHeaders;
 import org.springframework.messaging.converter.CompositeMessageConverter;
-import org.springframework.messaging.converter.MessageConversionException;
-import org.springframework.messaging.support.GenericMessage;
 import org.springframework.messaging.support.MessageBuilder;
 import org.springframework.util.Assert;
-import org.springframework.util.CollectionUtils;
 import org.springframework.util.MimeType;
-import org.springframework.util.MimeTypeUtils;
 import org.springframework.util.ObjectUtils;
 import org.springframework.util.ReflectionUtils;
 import org.springframework.util.StringUtils;
 
+import net.jodah.typetools.TypeResolver;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 /**
- *
- * Basic implementation of FunctionRegistry which maintains the cache of registered functions while
- * decorating them with additional features such as transparent type conversion, composition, routing etc.
- *
- * Unlike {@link BeanFactoryAwareFunctionRegistry}, this implementation does not depend on {@link BeanFactory}.
+ * Implementation of {@link FunctionCatalog} and {@link FunctionRegistry} which
+ * does not depend on Spring's {@link BeanFactory}.
+ * Each function must be registered with it explicitly to benefit from features
+ * such as type conversion, composition, POJO etc.
  *
  * @author Oleg Zhurakousky
  *
- * @since 3.1
  */
 public class SimpleFunctionRegistry implements FunctionRegistry, FunctionInspector {
-
 	protected Log logger = LogFactory.getLog(this.getClass());
-
-	/**
-	 * Identifies MessageConversionExceptions that happen when input can't be converted.
+	/*
+	 * - do we care about FunctionRegistration after it's been registered? What additional value does it bring?
+	 *
 	 */
-	public static final String COULD_NOT_CONVERT_INPUT = "Could Not Convert Input";
 
-	/**
-	 * Identifies MessageConversionExceptions that happen when output can't be converted.
-	 */
-	public static final String COULD_NOT_CONVERT_OUTPUT = "Could Not Convert Output";
+	private final Field headersField;
 
-	private final Map<Object, FunctionRegistration<Object>> registrationsByFunction = new HashMap<>();
+	private final Set<FunctionRegistration<?>> functionRegistrations = new HashSet<>();
 
-	private final Map<String, FunctionRegistration<Object>> registrationsByName = new HashMap<>();
+	private final Map<String, FunctionInvocationWrapper> wrappedFunctionDefinitions = new HashMap<>();
 
 	private final ConversionService conversionService;
 
 	private final CompositeMessageConverter messageConverter;
 
-	private List<String> declaredFunctionDefinitions;
+	private final JsonMapper jsonMapper;
 
-	@Autowired(required = false)
-	private FunctionAroundWrapper functionAroundWrapper;
-
-	public SimpleFunctionRegistry(ConversionService conversionService, @Nullable CompositeMessageConverter messageConverter) {
+	public SimpleFunctionRegistry(ConversionService conversionService, CompositeMessageConverter messageConverter, JsonMapper jsonMapper) {
+		Assert.notNull(messageConverter, "'messageConverter' must not be null");
+		Assert.notNull(jsonMapper, "'jsonMapper' must not be null");
 		this.conversionService = conversionService;
+		this.jsonMapper = jsonMapper;
 		this.messageConverter = messageConverter;
-		this.init(System.getProperty("spring.cloud.function.definition"));
+		this.headersField = ReflectionUtils.findField(MessageHeaders.class, "headers");
+		this.headersField.setAccessible(true);
 	}
 
-	void init(String functionDefinition) {
-		this.declaredFunctionDefinitions = StringUtils.hasText(functionDefinition) ? Arrays.asList(functionDefinition.split(";")) : Collections.emptyList();
-		if (this.declaredFunctionDefinitions.contains(RoutingFunction.FUNCTION_NAME)) {
-			Assert.isTrue(this.declaredFunctionDefinitions.size() == 1, "It is illegal to declare more than one function when using RoutingFunction");
-		}
-	}
-
-	@Override
-	public <T> T lookup(Class<?> type, String definition) {
-		return this.lookup(definition, new String[] {});
-	}
-
-	@Override
-	public int size() {
-		return this.registrationsByFunction.size();
-	}
-
-	@Override
 	@SuppressWarnings("unchecked")
-	public <T> T lookup(String definition, String... acceptedOutputTypes) {
-		definition = StringUtils.hasText(definition) ? definition.replaceAll(",", "|") : "";
-
-		boolean routing = definition.contains(RoutingFunction.FUNCTION_NAME)
-				|| this.declaredFunctionDefinitions.contains(RoutingFunction.FUNCTION_NAME);
-
-		if (!routing && this.declaredFunctionDefinitions.size() > 0) {
-			if (StringUtils.hasText(definition)) {
-				if (this.declaredFunctionDefinitions.size() > 1
-						&& !this.declaredFunctionDefinitions.contains(definition)
-						&& !this.registrationsByName.containsKey(definition)) {
-					logger.warn("Attempted to access un-declared function definition '" + definition + "'. Declared functions are '" + this.declaredFunctionDefinitions
-							+ "' specified via `spring.cloud.function.definition` property. If the intention is to access "
-							+ "any function available in FunctionCatalog, please remove `spring.cloud.function.definition` property.");
-					return null;
-				}
+	@Override
+	public <T> T lookup(Class<?> type, String functionDefinition, String... expectedOutputMimeTypes) {
+		functionDefinition = this.normalizeFunctionDefinition(functionDefinition);
+		FunctionInvocationWrapper function = this.doLookup(type, functionDefinition, expectedOutputMimeTypes);
+		if (logger.isInfoEnabled()) {
+			if (function != null) {
+				logger.info("Located function: " + function);
 			}
 			else {
-				if (this.declaredFunctionDefinitions.size() == 1) {
-					definition = this.declaredFunctionDefinitions.get(0);
-				}
-				else if (this.declaredFunctionDefinitions.size() > 1) {
-					logger.warn("Default function can not be mapped since multiple functions are declared " + this.declaredFunctionDefinitions);
-					return null;
-				}
-				else {
-					logger.warn("Default function can not be mapped since multiple functions are available in FunctionCatalog. "
-							+ "Please use 'spring.cloud.function.definition' property.");
-					return null;
-				}
+				logger.info("Failed to locate function: " + functionDefinition);
 			}
-		}
-
-		FunctionInvocationWrapper function = (FunctionInvocationWrapper) this.compose(null, definition, acceptedOutputTypes);
-
-		if (this.functionAroundWrapper != null && function != null) {
-			return (T) new FunctionInvocationWrapper(function) {
-				@SuppressWarnings("rawtypes")
-				@Override
-				Object doApply(Object input, boolean consumer, Function<Message, Message> enricher) {
-					return functionAroundWrapper.apply(input, function);
-				}
-			};
 		}
 		return (T) function;
 	}
 
 	@Override
-	public Set<String> getNames(Class<?> type) {
-		Set<String> registeredNames = registrationsByFunction.values().stream().flatMap(reg -> reg.getNames().stream())
-			.collect(Collectors.toSet());
-		return registeredNames;
+	public FunctionRegistration<?> getRegistration(Object function) {
+		throw new UnsupportedOperationException();
 	}
 
-	@SuppressWarnings("unchecked")
 	@Override
 	public <T> void register(FunctionRegistration<T> registration) {
-		this.registrationsByFunction.put(registration.getTarget(), (FunctionRegistration<Object>) registration);
-		for (String name : registration.getNames()) {
-			this.registrationsByName.put(name, (FunctionRegistration<Object>) registration);
-		}
+		this.functionRegistrations.add(registration);
+	}
+
+	//-----
+
+	@Override
+	public Set<String> getNames(Class<?> type) {
+		return this.functionRegistrations.stream().flatMap(fr -> fr.getNames().stream()).collect(Collectors.toSet());
 	}
 
 	@Override
-	public FunctionRegistration<?> getRegistration(Object function) {
-		FunctionRegistration<?> registration = this.registrationsByFunction.get(function);
-		if (registration == null && function instanceof FunctionInvocationWrapper) {
-			registration = this.registrationsByName.get(((FunctionInvocationWrapper) function).getFunctionDefinition());
-			if (registration == null) {
-				function = ((FunctionInvocationWrapper) function).target;
-				registration = this.registrationsByFunction.get(function);
-			}
-		}
-		return registration;
-	}
-
-	Object locateFunction(String name) {
-		return this.registrationsByName.get(name);
-	}
-
-	Type discoverFunctionType(Object function, String... names) {
-		if (function instanceof RoutingFunction) {
-			return this.registrationsByName.get(names[0]).getType().getType();
-		}
-		return FunctionTypeUtils.discoverFunctionTypeFromClass(function.getClass());
-	}
-
-	String discoverDefaultDefinitionFromRegistration() {
-		String definition = null;
-		if (this.registrationsByName.size() > 0) {
-			Assert
-				.isTrue(this.registrationsByName.size() == 1, "Found more than one function in local registry");
-			definition = this.registrationsByName.keySet().iterator().next();
-		}
-		return definition;
-	}
-
-	String discoverDefaultDefinitionIfNecessary(String definition) {
-		if (StringUtils.isEmpty(definition)) {
-			definition = this.discoverDefaultDefinitionFromRegistration();
-		}
-		else if (!this.registrationsByName.containsKey(definition) && this.registrationsByName.size() == 1) {
-			definition = this.registrationsByName.keySet().iterator().next();
-		}
-		else if (definition.endsWith("|")) {
-			if (this.registrationsByName.size() == 2) {
-				Set<String> fNames = this.getNames(null);
-				definition = this.determinImpliedDefinition(fNames, definition);
-			}
-		}
-		return definition;
-	}
-
-	String determinImpliedDefinition(Set<String> fNames, String originalDefinition) {
-		if (fNames.size() == 2) {
-			Iterator<String> iter = fNames.iterator();
-			String n1 = iter.next();
-			String n2 = iter.next();
-			String[] definitionName = StringUtils.delimitedListToStringArray(originalDefinition, "|");
-			if (definitionName[0].equals(n1)) {
-				definitionName[1] = n2;
-				originalDefinition = definitionName[0] + "|" + definitionName[1];
-			}
-			else {
-				definitionName[1] = n1;
-				originalDefinition = definitionName[0] + "|" + definitionName[1];
-			}
-		}
-		return originalDefinition;
-	}
-
-	Type discoverFunctionTypeByName(String name) {
-		return this.registrationsByName.get(name).getType().getType();
-	}
-
-	@SuppressWarnings({"unchecked", "rawtypes"})
-	private Function<?, ?> compose(Class<?> type, String definition, String... acceptedOutputTypes) {
-		if (logger.isInfoEnabled()) {
-			logger.info("Looking up function '" + definition + "' with acceptedOutputTypes: " + Arrays
-				.asList(acceptedOutputTypes));
-		}
-		definition = discoverDefaultDefinitionIfNecessary(definition);
-		if (StringUtils.isEmpty(definition)) {
-			return null;
-		}
-		Function<?, ?> resultFunction = null;
-		if (this.registrationsByName.containsKey(definition)) {
-			Object targetFunction = this.registrationsByName.get(definition).getTarget();
-			Type functionType = this.registrationsByName.get(definition).getType().getType();
-			if (targetFunction instanceof FunctionInvocationWrapper) {
-				resultFunction = new FunctionInvocationWrapper(((FunctionInvocationWrapper) targetFunction).getTarget(), functionType, definition, acceptedOutputTypes);
-			}
-			else {
-				resultFunction = new FunctionInvocationWrapper(targetFunction, functionType, definition, acceptedOutputTypes);
-			}
-		}
-		else {
-			String[] names = StringUtils.delimitedListToStringArray(definition.replaceAll(",", "|").trim(), "|");
-			StringBuilder composedNameBuilder = new StringBuilder();
-			String prefix = "";
-
-			Type originFunctionType = null;
-			for (String name : names) {
-				Object function = this.locateFunction(name);
-				if (function == null) {
-					logger.warn("Failed to discover function '" + definition + "' in function catalog. "
-						+ "Function available in catalog are: " + this.getNames(null) + ". This is generally "
-								+ "acceptable for cases where there was no intention to use functions.");
-					return null;
-				}
-				else {
-					Type functionType = this.discoverFunctionTypeByName(name);
-					if (functionType != null && functionType.toString().contains("org.apache.kafka.streams.")) {
-						logger
-							.debug("Kafka Streams function '" + definition + "' is not supported by spring-cloud-function.");
-						return null;
-					}
-				}
-
-				composedNameBuilder.append(prefix);
-				composedNameBuilder.append(name);
-
-				FunctionRegistration<Object> registration;
-				Type currentFunctionType = null;
-
-				if (function instanceof FunctionRegistration) {
-					registration = (FunctionRegistration<Object>) function;
-					currentFunctionType = currentFunctionType == null ? registration.getType()
-						.getType() : currentFunctionType;
-					function = registration.getTarget();
-				}
-				else {
-					if (isFunctionPojo(function)) {
-						Method functionalMethod = FunctionTypeUtils.discoverFunctionalMethod(function.getClass());
-						currentFunctionType = FunctionTypeUtils.fromFunctionMethod(functionalMethod);
-						function = this.proxyTarget(function, functionalMethod);
-					}
-					String[] aliasNames = this.getAliases(name).toArray(new String[] {});
-					currentFunctionType = currentFunctionType == null ? this
-						.discoverFunctionType(function, aliasNames) : currentFunctionType;
-					registration = new FunctionRegistration<>(function, name).type(currentFunctionType);
-				}
-
-				if (function instanceof RoutingFunction) {
-					registrationsByFunction.putIfAbsent(function, registration);
-					registrationsByName.putIfAbsent(name, registration);
-				}
-
-				function = new FunctionInvocationWrapper(function, currentFunctionType, name, names.length > 1 ? new String[] {} : acceptedOutputTypes);
-
-				if (originFunctionType == null) {
-					originFunctionType = currentFunctionType;
-				}
-
-				// composition
-				if (resultFunction == null) {
-					resultFunction = (Function<?, ?>) function;
-				}
-				else {
-					originFunctionType = FunctionTypeUtils.compose(originFunctionType, currentFunctionType);
-					resultFunction = new FunctionInvocationWrapper(resultFunction.andThen((Function) function),
-						originFunctionType, composedNameBuilder.toString(), acceptedOutputTypes);
-				}
-				prefix = "|";
-			}
-			((FunctionInvocationWrapper) resultFunction).acceptedOutputMimeTypes = acceptedOutputTypes;
-			FunctionRegistration<Object> registration = new FunctionRegistration<Object>(resultFunction, definition)
-				.type(originFunctionType);
-			registrationsByFunction.putIfAbsent(resultFunction, registration);
-			registrationsByName.putIfAbsent(definition, registration);
-		}
-		return resultFunction;
-	}
-
-	private boolean isFunctionPojo(Object function) {
-		return !function.getClass().isSynthetic()
-			&& !(function instanceof Supplier) && !(function instanceof Function) && !(function instanceof Consumer)
-			&& !function.getClass().getPackage().getName().startsWith("org.springframework.cloud.function.compiler");
+	public int size() {
+		return this.functionRegistrations.size();
 	}
 
 	/*
-	 * == INNER PROXY ===
-	 * When dealing with POJO functions we still want to be able to treat them as any other
-	 * function for purposes of composition, type conversion and fluxification.
-	 * So this proxy will ensure that the target class can be represented as Function while delegating
-	 * any call to apply to the actual target method.
-	 * Since this proxy is part of the FunctionInvocationWrapper composition and copnversion will be applied
-	 * as tyo any other function.
-	 */
-	private Object proxyTarget(Object targetFunction, Method actualMethodToCall) {
-		ProxyFactory pf = new ProxyFactory(targetFunction);
-		pf.setProxyTargetClass(true);
-		pf.setInterfaces(Function.class);
-		pf.addAdvice(new MethodInterceptor() {
-			@Override
-			public Object invoke(MethodInvocation invocation) throws Throwable {
-				return actualMethodToCall.invoke(invocation.getThis(), invocation.getArguments());
-			}
-		});
-		return pf.getProxy();
-	}
-
-	/**
-	 * Returns a list of aliases for 'functionName'.
-	 * It will do so providing the underlying implementation is based on the
-	 * system that supports name aliasing (see {@link BeanFactoryAwareFunctionRegistry}
-	 * @param functionName the name of the function
-	 * @return collection of aliases
-	 */
-	Collection<String> getAliases(String functionName) {
-		return Collections.singletonList(functionName);
-	}
-
-	/**
-	 * Single wrapper for all Suppliers, Functions and Consumers managed by this
-	 * catalog.
 	 *
-	 * @author Oleg Zhurakousky
 	 */
-	public class FunctionInvocationWrapper implements Function<Object, Object>, Consumer<Object>,
-			Supplier<Object>, Runnable {
+	protected boolean containsFunction(String functionName) {
+		return this.functionRegistrations.stream().anyMatch(reg -> reg.getNames().contains(functionName));
+	}
+
+	/*
+	 *
+	 */
+	@SuppressWarnings("unchecked")
+	<T> T doLookup(Class<?> type, String functionDefinition, String[] expectedOutputMimeTypes) {
+		FunctionInvocationWrapper function = this.wrappedFunctionDefinitions.get(functionDefinition);
+
+		if (function == null) {
+			function = this.compose(type, functionDefinition);
+		}
+
+		if (function != null) {
+			function.expectedOutputContentType = ObjectUtils.isEmpty(expectedOutputMimeTypes) ? null : expectedOutputMimeTypes[0];
+		}
+		return (T) function;
+	}
+
+	/**
+	 * This method will make sure that if there is only one function in catalog
+	 * it can be looked up by any name of no name.
+	 * It does so by attempting to determine the default function name
+	 * (the only function in catalog) and checking if it matches the provided name
+	 * replacing it if it does not.
+	 */
+	String normalizeFunctionDefinition(String functionDefinition) {
+		functionDefinition = StringUtils.hasText(functionDefinition)
+				? functionDefinition.replaceAll(",", "|")
+				: System.getProperty(FunctionProperties.FUNCTION_DEFINITION, "");
+
+		if (!this.getNames(null).contains(functionDefinition)) {
+			List<String> eligibleFunction = this.getNames(null).stream()
+					.filter(name -> !RoutingFunction.FUNCTION_NAME.equals(name))
+					.collect(Collectors.toList());
+			if (eligibleFunction.size() == 1
+					&& !eligibleFunction.get(0).equals(functionDefinition)
+					&& !functionDefinition.contains("|")) {
+				functionDefinition = eligibleFunction.get(0);
+			}
+		}
+		return functionDefinition;
+	}
+
+
+	private FunctionInvocationWrapper findFunctionInFunctionRegistrations(String functionName) {
+		FunctionRegistration<?> functionRegistration = this.functionRegistrations.stream()
+				.filter(fr -> fr.getNames().contains(functionName))
+				.findFirst()
+				.orElseGet(() -> null);
+		return functionRegistration != null
+				? new FunctionInvocationWrapper(functionName, functionRegistration.getTarget(), functionRegistration.getType().getType())
+						: null;
+
+	}
+
+	/*
+	 *
+	 */
+	private FunctionInvocationWrapper compose(Class<?> type, String functionDefinition) {
+		String[] functionNames = StringUtils.delimitedListToStringArray(functionDefinition.replaceAll(",", "|").trim(), "|");
+		FunctionInvocationWrapper composedFunction = null;
+
+		for (String functionName : functionNames) {
+			FunctionInvocationWrapper function = this.findFunctionInFunctionRegistrations(functionName);
+			if (function == null) {
+				return null;
+			}
+			else {
+				if (composedFunction == null) {
+					composedFunction = function;
+				}
+				else {
+					FunctionInvocationWrapper andThenFunction =
+							new FunctionInvocationWrapper(functionName, function.getTarget(), function.inputType, function.outputType);
+					composedFunction = (FunctionInvocationWrapper) composedFunction.andThen((Function<Object, Object>) andThenFunction);
+				}
+				this.wrappedFunctionDefinitions.put(composedFunction.functionDefinition, composedFunction);
+			}
+		}
+		return composedFunction;
+	}
+
+	/**
+	 *
+	 */
+	@SuppressWarnings("rawtypes")
+	public class FunctionInvocationWrapper implements Function<Object, Object>, Consumer<Object>, Supplier<Object>, Runnable {
 
 		private final Object target;
 
-		private final Type functionType;
+		private Type inputType;
 
-		private final boolean composed;
-
-		String[] acceptedOutputMimeTypes;
+		private final Type outputType;
 
 		private final String functionDefinition;
 
-		private final Field headersField;
+		private boolean composed;
 
-		private FunctionInvocationWrapper delegate;
+		private boolean message;
 
-		FunctionInvocationWrapper(FunctionInvocationWrapper delegate) {
-			this.delegate = delegate;
-			this.target = delegate.target;
-			this.composed = delegate.composed;
-			this.functionType = delegate.functionType;
-			this.acceptedOutputMimeTypes = delegate.acceptedOutputMimeTypes;
-			this.functionDefinition = delegate.functionDefinition;
-			this.headersField = delegate.headersField;
+		private String expectedOutputContentType;
+
+		public FunctionInvocationWrapper(String functionDefinition,  Object target, Type functionType) {
+			this(functionDefinition, target, FunctionTypeUtils.isSupplier(functionType) ? null : FunctionTypeUtils.getInputType(functionType, 0),
+					FunctionTypeUtils.getOutputType(functionType, 0));
 		}
 
-		FunctionInvocationWrapper(Object target, Type functionType, String functionDefinition, String... acceptedOutputMimeTypes) {
+		public FunctionInvocationWrapper(String functionDefinition,  Object target, Type inputType, Type outputType) {
 			this.target = target;
-			this.composed = functionDefinition.contains("|") || target instanceof RoutingFunction;
-			this.functionType = functionType;
-			this.acceptedOutputMimeTypes = acceptedOutputMimeTypes;
+			this.inputType = inputType == null ? inputType : TypeResolver.reify(inputType);
+			this.outputType = outputType == null ? outputType : TypeResolver.reify(outputType);
 			this.functionDefinition = functionDefinition;
-			this.headersField = ReflectionUtils.findField(MessageHeaders.class, "headers");
-			this.headersField.setAccessible(true);
+			this.message = this.inputType != null && FunctionTypeUtils.isMessage(this.inputType);
 		}
 
-		@Override
-		public int hashCode() {
-			return this.delegate == null ? this.target.hashCode() : this.delegate.hashCode();
+		public Object getTarget() {
+			return target;
 		}
 
-		@Override
-		public boolean equals(Object o) {
-			return this.delegate == null ? this.target.equals(o) : this.delegate.equals(o);
+		public Type getOutputType() {
+			return this.outputType;
 		}
 
-		public String getFunctionDefinition() {
-			return this.functionDefinition;
+		public Type getInputType() {
+			return this.inputType;
 		}
 
-		@Override
-		public void accept(Object input) {
-			this.doApply(input, true, null);
+		public Class<?> getRawOutputType() {
+			return TypeResolver.resolveRawClass(this.outputType, null);
 		}
 
-		@Override
-		public Object apply(Object input) {
-			return this.apply(input, null);
+		public Class<?> getRawInputType() {
+			return TypeResolver.resolveRawClass(this.inputType, null);
 		}
 
 		/**
-		 * !! Experimental, may change. Is not yet intended as public API !!
 		 *
-		 * @param input    input value
-		 * @param enricher enricher function instance
-		 * @return the result
 		 */
-		@SuppressWarnings("rawtypes")
-		public Object apply(Object input, Function<Message, Message> enricher) {
-			return this.doApply(input, false, enricher);
+		@Override
+		public Object apply(Object input) {
+
+			Object result = this.doApply(input);
+
+			if (result != null && this.outputType != null) {
+				result = this.convertOutputIfNecessary(result);
+			}
+
+			result = this.enrichInvocationResult(input, result);
+
+			return result;
 		}
 
 		@Override
 		public Object get() {
-			return this.get(null);
+			return this.apply(null);
 		}
 
-		/**
-		 * !! Experimental, may change. Is not yet intended as public API !!
-		 *
-		 * @param enricher enricher function instance
-		 * @return the result
-		 */
-		@SuppressWarnings("rawtypes")
-		public Object get(Function<Message, Message> enricher) {
-			Object input = FunctionTypeUtils.isMono(this.functionType)
-				? Mono.empty()
-				: (FunctionTypeUtils.isFlux(this.functionType) ? Flux.empty() : null);
-
-			return this.doApply(input, false, enricher);
+		@Override
+		public void accept(Object input) {
+			this.apply(input);
 		}
 
 		@Override
@@ -513,390 +291,323 @@ public class SimpleFunctionRegistry implements FunctionRegistry, FunctionInspect
 			this.apply(null);
 		}
 
-		public Type getFunctionType() {
-			return this.functionType;
-		}
-
 		public boolean isConsumer() {
-			return FunctionTypeUtils.isConsumer(this.functionType);
+			return this.outputType == null;
 		}
 
 		public boolean isSupplier() {
-			return FunctionTypeUtils.isSupplier(this.functionType);
+			return this.inputType == null;
 		}
 
-		public Object getTarget() {
-			return target;
+		public boolean isFunction() {
+			return this.inputType != null && this.outputType != null;
+		}
+
+		public boolean isInputTypePublisher() {
+			return FunctionTypeUtils.isReactive(this.inputType);
+		}
+
+		public boolean isOutputTypePublisher() {
+			return FunctionTypeUtils.isReactive(this.outputType);
+		}
+
+		public boolean isInputTypeMessage() {
+			return this.message || this.isRoutingFunction();
+		}
+
+		public boolean isOutputTypeMessage() {
+			return FunctionTypeUtils.isMessage(this.outputType);
+		}
+
+
+		public boolean isRoutingFunction() {
+			return this.target instanceof RoutingFunction;
+		}
+
+		/*
+		 *
+		 */
+		@SuppressWarnings("unchecked")
+		@Override
+		public <V> Function<Object, V> andThen(Function<? super Object, ? extends V> after) {
+			Function f = t -> ((FunctionInvocationWrapper) after).doApply(doApply(t));
+
+			FunctionInvocationWrapper afterWrapper = (FunctionInvocationWrapper) after;
+
+			Type composedFunctionType;
+			if (afterWrapper.outputType == null) {
+				composedFunctionType = ResolvableType.forClassWithGenerics(Consumer.class, this.inputType == null
+						? null
+						: ResolvableType.forType(this.inputType)).getType();
+			}
+			else if (this.inputType == null && afterWrapper.outputType != null) {
+				composedFunctionType = ResolvableType.forClassWithGenerics(Supplier.class, this.outputType == null
+						? null
+						: ResolvableType.forType(afterWrapper.outputType)).getType();
+			}
+			else if (this.outputType == null) {
+				throw new IllegalArgumentException("Can NOT compose anything with Consumer");
+			}
+			else {
+				composedFunctionType = ResolvableType.forClassWithGenerics(Function.class,
+						ResolvableType.forType(this.inputType) ,
+						ResolvableType.forType(((FunctionInvocationWrapper) after).outputType)).getType();
+			}
+
+			String composedName = this.functionDefinition + "|" + afterWrapper.functionDefinition;
+			FunctionInvocationWrapper composedFunction = new FunctionInvocationWrapper(composedName, f, composedFunctionType);
+			composedFunction.composed = true;
+
+			return (Function<Object, V>) composedFunction;
+		}
+
+		/*
+		 *
+		 */
+		public boolean isComposed() {
+			return this.composed;
+		}
+
+		public String getFunctionDefinition() {
+			return this.functionDefinition;
 		}
 
 		@Override
 		public String toString() {
-			return "definition: " + this.functionDefinition + "; type: " + this.functionType;
+			return this.functionDefinition + (this.isComposed() ? "" : "<" + this.inputType + ", " + this.outputType + ">");
 		}
 
-		@SuppressWarnings({"rawtypes", "unchecked"})
-		private Object invokeFunction(Object input) {
-			Message incomingMessage = null;
-			if (!this.functionDefinition.startsWith(RoutingFunction.FUNCTION_NAME)) {
-				if (input instanceof Message
-						&& !FunctionTypeUtils.isMessage(FunctionTypeUtils.getInputType(functionType, 0))
-						&& ((Message) input).getHeaders().containsKey("scf-func-name")) {
-					incomingMessage = (Message) input;
-					input = incomingMessage.getPayload();
-				}
-			}
-
-			Object invocationResult = null;
-			if (this.target instanceof Function) {
-				invocationResult = ((Function) target).apply(input);
-			}
-			else if (this.target instanceof Supplier) {
-				invocationResult = ((Supplier) target).get();
-			}
-			else {
-				if (input instanceof Flux) {
-					invocationResult = ((Flux) input).transform(flux -> {
-						((Consumer) this.target).accept(flux);
-						return Mono.ignoreElements((Flux) flux);
-					}).then();
-				}
-				else if (input instanceof Mono) {
-					invocationResult = ((Mono) input).transform(flux -> {
-						((Consumer) this.target).accept(flux);
-						return Mono.ignoreElements((Mono) flux);
-					}).then();
+		/**
+		 * Will wrap the result in a Message if necessary and will copy input headers to the output message
+		 */
+		@SuppressWarnings("unchecked")
+		private Object enrichInvocationResult(Object input, Object result) {
+			if (input instanceof Message
+					&& ((Message) input).getHeaders().keySet().stream().filter(key -> key.startsWith("scf")).findFirst().isPresent()) {
+				if (result instanceof Message) {
+					Map<String, Object> headersMap = (Map<String, Object>) ReflectionUtils
+							.getField(SimpleFunctionRegistry.this.headersField, ((Message) result).getHeaders());
+					headersMap.putAll(((Message) input).getHeaders());
 				}
 				else {
-					((Consumer) this.target).accept(input);
+					result = MessageBuilder.withPayload(result).copyHeaders(((Message) input).getHeaders()).build();
 				}
 			}
-
-			if (!(this.target instanceof Consumer) && logger.isDebugEnabled()) {
-				logger
-					.debug("Result of invocation of \"" + this.functionDefinition + "\" function is '" + invocationResult + "'");
-			}
-			if (!(invocationResult instanceof Message)) {
-				if (incomingMessage != null && invocationResult != null && incomingMessage.getHeaders().containsKey("scf-func-name")) {
-					invocationResult = MessageBuilder.withPayload(invocationResult)
-							.copyHeaders(incomingMessage.getHeaders())
-							.removeHeader(MessageHeaders.CONTENT_TYPE)
-							.build();
-				}
-			}
-			return invocationResult;
+			return result;
 		}
 
-		@SuppressWarnings({ "unchecked", "rawtypes" })
-		Object doApply(Object input, boolean consumer, Function<Message, Message> enricher) {
-			if (logger.isDebugEnabled()) {
-				logger.debug("Applying function: " + this.functionDefinition);
+		private Object fluxifyInputIfNecessary(Object input) {
+			if (!(input instanceof Publisher) && this.isInputTypePublisher()) {
+				return input == null
+						? FunctionTypeUtils.isMono(this.inputType) ? Mono.empty() : Flux.empty()
+								: FunctionTypeUtils.isMono(this.inputType) ? Mono.just(input) : Flux.just(input);
 			}
+			return input;
+		}
 
-
+		@SuppressWarnings("unchecked")
+		private Object doApply(Object input) {
 			Object result;
+
+			input = this.fluxifyInputIfNecessary(input);
+
+			Object convertedInput = this.convertInputIfNecessary(input);
+
+			if (this.isRoutingFunction() || this.isComposed()) {
+				result = ((Function) this.target).apply(convertedInput);
+			}
+			else if (this.isSupplier()) {
+				result = ((Supplier) this.target).get();
+			}
+			else if (this.isConsumer()) {
+				result = this.invokeConsumer(convertedInput);
+			}
+			else { // Function
+				result = this.invokeFunction(convertedInput);
+			}
+			return result;
+		}
+
+		@SuppressWarnings("unchecked")
+		private Object invokeFunction(Object convertedInput) {
+			Object result;
+			if (this.isInputTypePublisher()) {
+				result = ((Function) this.target).apply(convertedInput);
+			}
+			else if (convertedInput instanceof Publisher) {
+				result = convertedInput instanceof Mono
+						? Mono.from((Publisher) convertedInput).map(value -> ((Function) this.target).apply(value))
+						: Flux.from((Publisher) convertedInput).map(value -> ((Function) this.target).apply(value));
+			}
+			else {
+				result = ((Function) this.target).apply(convertedInput);
+			}
+			return result;
+		}
+
+		@SuppressWarnings("unchecked")
+		private Object invokeConsumer(Object convertedInput) {
+			Object result = null;
+			if (this.isInputTypePublisher()) {
+				if (convertedInput instanceof Flux) {
+					result = ((Flux) convertedInput)
+							.transform(flux -> {
+								((Consumer) this.target).accept(flux);
+								return Mono.ignoreElements((Flux) flux);
+							}).then();
+				}
+				else {
+					result = ((Mono) convertedInput)
+							.transform(flux -> {
+								((Consumer) this.target).accept(flux);
+								return Mono.ignoreElements((Flux) flux);
+							}).then();
+				}
+			}
+			else if (convertedInput instanceof Publisher) {
+				result = convertedInput instanceof Mono
+						? Mono.from((Publisher) convertedInput).doOnNext((Consumer) this.target).then()
+						: Flux.from((Publisher) convertedInput).doOnNext((Consumer) this.target).then();
+			}
+			else {
+				((Consumer) this.target).accept(convertedInput);
+			}
+			return result;
+		}
+
+		/*
+		 *
+		 */
+		@SuppressWarnings("unchecked")
+		private Object convertInputIfNecessary(Object input) {
+			Object convertedInput = input;
+			if (input == null || this.target instanceof RoutingFunction || this.isComposed()) {
+				return input;
+			}
+
 			if (input instanceof Publisher) {
-				input = this.composed ? input :
-					this.convertInputPublisherIfNecessary((Publisher<?>) input, FunctionTypeUtils
-						.getInputType(this.functionType, 0));
-				if (FunctionTypeUtils.isReactive(FunctionTypeUtils.getInputType(this.functionType, 0))) {
-					result = this.invokeFunction(input);
-				}
-				else {
-					if (this.composed) {
-						return input instanceof Mono
-							? Mono.from((Publisher<?>) input).transform((Function) this.target)
-							: Flux.from((Publisher<?>) input).transform((Function) this.target);
+				convertedInput = this.convertInputPublisherIfNecessary((Publisher) input);
+			}
+			else if (input instanceof Message) {
+				convertedInput = this.convertInputMessageIfNecessary(input);
+			}
+			else {
+				Class<?> type = this.isInputTypePublisher() || this.isInputTypeMessage()
+						? TypeResolver.resolveRawClass(FunctionTypeUtils.getImmediateGenericType(this.inputType, 0), null)
+						: this.getRawInputType();
+
+				if (!type.isAssignableFrom(input.getClass())) {
+					if (type != input.getClass()
+							&& SimpleFunctionRegistry.this.conversionService != null
+							&& SimpleFunctionRegistry.this.conversionService.canConvert(input.getClass(), type)) {
+						convertedInput = SimpleFunctionRegistry.this.conversionService.convert(input, (Class) type);
 					}
 					else {
-						if (FunctionTypeUtils.isConsumer(functionType)) {
-							result = input instanceof Mono
-								? Mono.from((Publisher) input).doOnNext((Consumer) this.target).then()
-								: Flux.from((Publisher) input).doOnNext((Consumer) this.target).then();
-						}
-						else {
-							result = input instanceof Mono
-								? Mono.from((Publisher) input).map(value -> this.invokeFunction(value))
-								: Flux.from((Publisher) input).map(value -> this.invokeFunction(value));
-						}
+						convertedInput = SimpleFunctionRegistry.this.jsonMapper.fromJson(input, type);
 					}
 				}
 			}
-			else {
-				Type type = FunctionTypeUtils.getInputType(this.functionType, 0);
-				if (!this.composed && !FunctionTypeUtils
-					.isMultipleInputArguments(this.functionType) && FunctionTypeUtils.isReactive(type)) {
-					Publisher<?> publisher = FunctionTypeUtils.isFlux(type)
-						? input == null ? Flux.empty() : Flux.just(input)
-						: input == null ? Mono.empty() : Mono.just(input);
-					if (logger.isDebugEnabled()) {
-						logger.debug("Invoking reactive function '" + this.functionType + "' with non-reactive input "
-							+ "should at least assume reactive output (e.g., Function<String, Flux<String>> f3 = catalog.lookup(\"echoFlux\");), "
-							+ "otherwise invocation will result in ClassCastException.");
-					}
-					result = this.invokeFunction(this.convertInputPublisherIfNecessary(publisher, FunctionTypeUtils
-						.getInputType(this.functionType, 0)));
-				}
-				else {
-					result = this.invokeFunction(this.composed ? input
-						: (input == null ? input : this
-						.convertInputValueIfNecessary(input, FunctionTypeUtils.getInputType(this.functionType, 0))));
-				}
+			// wrap in Message if necessary
+			if (this.inputType != null && FunctionTypeUtils.isMessage(this.inputType)
+					&& !(convertedInput instanceof Message) && !(convertedInput instanceof Publisher)) {
+				convertedInput = MessageBuilder.withPayload(convertedInput).build();
 			}
 
-			// Outputs will be converted only if we're told how (via  acceptedOutputMimeTypes), otherwise output returned as is.
-			if (result != null && !ObjectUtils.isEmpty(this.acceptedOutputMimeTypes)) {
-				result = result instanceof Publisher
-					? this
-					.convertOutputPublisherIfNecessary((Publisher<?>) result, enricher, this.acceptedOutputMimeTypes)
-					: this.convertOutputValueIfNecessary(result, enricher, this.acceptedOutputMimeTypes);
-			}
-
-			return result;
+			return convertedInput;
 		}
 
-		@SuppressWarnings({"rawtypes", "unchecked"})
-		private Object convertOutputValueIfNecessary(Object value, Function<Message, Message> enricher, String... acceptedOutputMimeTypes) {
-			logger.debug("Applying type conversion on output value");
-			Object convertedValue = null;
-			if (FunctionTypeUtils.isMultipleArgumentsHolder(value)) {
-				int outputCount = FunctionTypeUtils.getOutputCount(this.functionType);
-				Object[] convertedInputArray = new Object[outputCount];
-				for (int i = 0; i < outputCount; i++) {
-					Expression parsed = new SpelExpressionParser().parseExpression("getT" + (i + 1) + "()");
-					Object outputArgument = parsed.getValue(value);
-					try {
-						convertedInputArray[i] = outputArgument instanceof Publisher
-							? this
-							.convertOutputPublisherIfNecessary((Publisher<?>) outputArgument, enricher, acceptedOutputMimeTypes[i])
-							: this.convertOutputValueIfNecessary(outputArgument, enricher, acceptedOutputMimeTypes[i]);
-					}
-					catch (ArrayIndexOutOfBoundsException e) {
-						throw new IllegalStateException("The number of 'acceptedOutputMimeTypes' for function '" + this.functionDefinition
-							+ "' is (" + acceptedOutputMimeTypes.length
-							+ "), which does not match the number of actual outputs of this function which is (" + outputCount + ").", e);
-					}
+		private Object convertInputMessageIfNecessary(Object input) {
+			Object convertedInput = input;
+			Type type = FunctionTypeUtils.getGenericType(this.inputType);
+			Class rawType = type instanceof ParameterizedType ? (Class) ((ParameterizedType) type).getRawType() : (Class) type;
 
-				}
-				convertedValue = Tuples.fromArray(convertedInputArray);
+			convertedInput = FunctionTypeUtils.isTypeCollection(type)
+					? SimpleFunctionRegistry.this.messageConverter.fromMessage(((Message) input), rawType, type)
+					: SimpleFunctionRegistry.this.messageConverter.fromMessage(((Message) input), rawType);
+
+			if (this.isInputTypeMessage()) {
+				convertedInput = MessageBuilder.withPayload(convertedInput).copyHeaders(((Message) input).getHeaders()).build();
 			}
-			else {
-				List<MimeType> acceptedContentTypes = MimeTypeUtils
-					.parseMimeTypes(acceptedOutputMimeTypes[0].toString());
-				if (CollectionUtils.isEmpty(acceptedContentTypes)) {
-					convertedValue = value;
-				}
-				else {
-					for (int i = 0; i < acceptedContentTypes.size() && convertedValue == null; i++) {
-						MimeType acceptedContentType = acceptedContentTypes.get(i);
-						/*
-						 * We need to treat Iterables differently since they may represent collection of Messages
-						 * which should be converted individually
-						 */
-						boolean convertIndividualItem = false;
-						if (value instanceof Iterable || (ObjectUtils.isArray(value) && !(value instanceof byte[]))) {
-							Type outputType = FunctionTypeUtils.getOutputType(functionType, 0);
-							if (outputType instanceof ParameterizedType) {
-								convertIndividualItem = FunctionTypeUtils.isMessage(FunctionTypeUtils.getImmediateGenericType(outputType, 0));
-							}
-							else if (outputType instanceof GenericArrayType) {
-								convertIndividualItem = FunctionTypeUtils.isMessage(((GenericArrayType) outputType).getGenericComponentType());
-							}
-						}
+			return convertedInput;
+		}
 
-						if (convertIndividualItem) {
-							if (ObjectUtils.isArray(value)) {
-								value = Arrays.asList((Object[]) value);
-							}
-							AtomicReference<List<Message>> messages = new AtomicReference<List<Message>>(new ArrayList<>());
-							((Iterable) value).forEach(element ->
-								messages.get()
-									.add((Message) convertOutputValueIfNecessary(element, enricher, acceptedContentType
-										.toString())));
-							convertedValue = messages.get();
-						}
-						else {
-							convertedValue = this.convertValueToMessage(value, enricher, acceptedContentType);
-						}
+		/*
+		 *
+		 */
+		private Object convertOutputIfNecessary(Object output) {
+			Object convertedOutput = output;
+			if (output instanceof Publisher) {
+				convertedOutput = this.convertOutputPublisherIfNecessary((Publisher) output);
+			}
+			else if (output instanceof Message) {
+				convertedOutput = this.convertOutputMessageIfNecessary(output);
+			}
+			else if (output instanceof Collection && this.isOutputTypeMessage()) {
+				convertedOutput = this.convertMultipleOutputValuesIfNecessary(output);
+			}
+			else if (StringUtils.hasText(this.expectedOutputContentType)) {
+				convertedOutput = messageConverter.toMessage(output,
+						new MessageHeaders(Collections.singletonMap(MessageHeaders.CONTENT_TYPE, MimeType.valueOf(this.expectedOutputContentType))));
+			}
+
+			return convertedOutput;
+		}
+
+		@SuppressWarnings("unchecked")
+		private Object convertOutputMessageIfNecessary(Object output) {
+			Map<String, Object> headersMap = (Map<String, Object>) ReflectionUtils
+					.getField(SimpleFunctionRegistry.this.headersField, ((Message) output).getHeaders());
+			String expectedContentTypeValue = ((Message) output).getHeaders().containsKey(FunctionProperties.EXPECT_CONTENT_TYPE_HEADER)
+					? (String) ((Message) output).getHeaders().get(FunctionProperties.EXPECT_CONTENT_TYPE_HEADER)
+							: this.expectedOutputContentType;
+
+			if (StringUtils.hasText(expectedContentTypeValue)) {
+				String[] expectedContentTypes = StringUtils.delimitedListToStringArray(expectedContentTypeValue, ",");
+				for (String expectedContentType : expectedContentTypes) {
+					headersMap.put(MessageHeaders.CONTENT_TYPE, expectedContentType);
+					Object result = messageConverter.toMessage(((Message) output).getPayload(), ((Message) output).getHeaders());
+					if (result != null) {
+						return result;
 					}
 				}
 			}
-
-			if (convertedValue == null) {
-				throw new MessageConversionException(COULD_NOT_CONVERT_OUTPUT);
-			}
-			return convertedValue;
+			return output;
 		}
 
-		@SuppressWarnings({"rawtypes", "unchecked"})
-		private Message convertValueToMessage(Object value, Function<Message, Message> enricher, MimeType acceptedContentType) {
-			Message outputMessage = null;
-			if (value instanceof Message) {
-				MessageHeaders headers = ((Message) value).getHeaders();
-				Map<String, Object> headersMap = (Map<String, Object>) ReflectionUtils
-					.getField(this.headersField, headers);
-				headersMap.put("accept", acceptedContentType);
-				// Set the contentType header to the value of accept for "legacy" reasons. But, do not set the
-				// contentType header to the value of accept if it is a wildcard type, as this doesn't make sense.
-				// This also applies to the else branch below.
-				if (acceptedContentType.isConcrete() && !headersMap.containsKey(MessageHeaders.CONTENT_TYPE)) {
-					headersMap.put(MessageHeaders.CONTENT_TYPE, acceptedContentType);
-				}
+		@SuppressWarnings("unchecked")
+		private Object convertMultipleOutputValuesIfNecessary(Object output) {
+			Collection outputCollection = (Collection) output;
+			Collection convertedOutputCollection = this.buildOutputCollection(output);
+			for (Object outToConvert : outputCollection) {
+				Object result = this.convertOutputIfNecessary(outToConvert);
+				Assert.notNull(result, "Failed to convert output");
+				convertedOutputCollection.add(result);
 			}
-			else {
-				MessageBuilder<Object> builder = MessageBuilder.withPayload(value)
-					.setHeader("accept", acceptedContentType);
-				if (acceptedContentType.isConcrete()) {
-					builder.setHeader(MessageHeaders.CONTENT_TYPE, acceptedContentType);
-				}
-				value = builder.build();
-			}
-			if (enricher != null) {
-				value = enricher.apply((Message) value);
-			}
-			outputMessage = messageConverter.toMessage(((Message) value).getPayload(), ((Message) value).getHeaders());
-			return outputMessage;
+			return convertedOutputCollection;
 		}
 
-		@SuppressWarnings("rawtypes")
-		private Publisher<?> convertOutputPublisherIfNecessary(Publisher<?> publisher, Function<Message, Message> enricher, String... acceptedOutputMimeTypes) {
-			if (logger.isDebugEnabled()) {
-				logger.debug("Applying type conversion on output Publisher " + publisher);
-			}
-
-			Publisher<?> result = publisher instanceof Mono
-				? Mono.from(publisher)
-				.map(value -> this.convertOutputValueIfNecessary(value, enricher, acceptedOutputMimeTypes))
-				: Flux.from(publisher)
-				.map(value -> this.convertOutputValueIfNecessary(value, enricher, acceptedOutputMimeTypes));
-			return result;
+		private Collection buildOutputCollection(Object result) {
+			return result instanceof List ? new ArrayList<>() : new TreeSet<>();
 		}
 
-		private Publisher<?> convertInputPublisherIfNecessary(Publisher<?> publisher, Type type) {
-			if (logger.isDebugEnabled()) {
-				logger.debug("Applying type conversion on input Publisher " + publisher);
-			}
-
-			Publisher<?> result = publisher instanceof Mono
-				? Mono.from(publisher).map(value -> this.convertInputValueIfNecessary(value, type)).doOnError(v -> {
-					v.printStackTrace();
-				})
-				: Flux.from(publisher).map(value -> this.convertInputValueIfNecessary(value, type)).doOnError(v -> {
-					v.printStackTrace();
-				});
-			return result;
+		/*
+		 *
+		 */
+		@SuppressWarnings("unchecked")
+		private Object convertInputPublisherIfNecessary(Publisher publisher) {
+			return publisher instanceof Mono
+					? Mono.from(publisher).map(this::convertInputIfNecessary)
+					: Flux.from(publisher).map(this::convertInputIfNecessary);
 		}
 
-		private Object convertInputValueIfNecessary(Object value, Type type) {
-			if (logger.isDebugEnabled()) {
-				logger.debug("Applying type conversion on input value " + value);
-				logger.debug("Function type: " + this.functionType);
-			}
-
-			Object convertedValue = value;
-			if (FunctionTypeUtils.isMultipleArgumentsHolder(value)) {
-				int inputCount = FunctionTypeUtils.getInputCount(functionType);
-				Object[] convertedInputArray = new Object[inputCount];
-				for (int i = 0; i < inputCount; i++) {
-					Expression parsed = new SpelExpressionParser().parseExpression("getT" + (i + 1) + "()");
-					Object inptArgument = parsed.getValue(value);
-					inptArgument = inptArgument instanceof Publisher
-						? this.convertInputPublisherIfNecessary((Publisher<?>) inptArgument, FunctionTypeUtils.getInputType(functionType, i))
-						: this.convertInputValueIfNecessary(inptArgument, FunctionTypeUtils.getInputType(functionType, i));
-					convertedInputArray[i] = inptArgument;
-				}
-				convertedValue = Tuples.fromArray(convertedInputArray);
-			}
-			else {
-				// this needs revisiting as the type is not always Class (think really complex types)
-				Type rawType = FunctionTypeUtils.unwrapActualTypeByIndex(type, 0);
-				if (logger.isDebugEnabled()) {
-					logger.debug("Raw type of value: " + value + " is " + rawType);
-				}
-
-				if (rawType instanceof ParameterizedType) {
-					rawType = ((ParameterizedType) rawType).getRawType();
-				}
-				if (value != null && !(value instanceof Message) && FunctionTypeUtils.isMessage(type)) {
-					value = new GenericMessage<>(value);
-					convertedValue = value;
-				}
-				if (value instanceof Message<?>) { // see AWS adapter with Optional payload
-					if (messageNeedsConversion(rawType, (Message<?>) value)) {
-						convertedValue = FunctionTypeUtils.isTypeCollection(type)
-							? messageConverter.fromMessage((Message<?>) value, (Class<?>) rawType, FunctionTypeUtils.getGenericType(type))
-							: messageConverter.fromMessage((Message<?>) value, (Class<?>) rawType);
-						if (logger.isDebugEnabled()) {
-							logger.debug("Converted from Message: " + convertedValue);
-						}
-
-						if (FunctionTypeUtils.isMessage(type) || ((Message<?>) value).getHeaders().containsKey("scf-func-name")) {
-							convertedValue = MessageBuilder.withPayload(convertedValue)
-									.copyHeaders(((Message<?>) value).getHeaders()).build();
-						}
-					}
-					else if (!FunctionTypeUtils.isMessage(type)) {
-						if (this.payloadIsSpecialType(((Message<?>) value).getPayload())) {
-							return null;
-						}
-						if (!((Message<?>) convertedValue).getHeaders().containsKey("scf-sink-url")) {
-							convertedValue = ((Message<?>) convertedValue).getPayload();
-						}
-					}
-				}
-				else if (rawType instanceof Class<?>) { // see AWS adapter with WildardTypeImpl and Azure with Voids
-					if (this.isJson(value)) {
-						convertedValue = messageConverter
-								.fromMessage(new GenericMessage<Object>(value), (Class<?>) rawType);
-					}
-					else {
-						try {
-							convertedValue = conversionService.convert(value, (Class<?>) rawType);
-						}
-						catch (Exception e) {
-							if (value instanceof String || value instanceof byte[]) {
-								convertedValue = messageConverter
-									.fromMessage(new GenericMessage<Object>(value), (Class<?>) rawType);
-							}
-						}
-					}
-				}
-			}
-			if (logger.isDebugEnabled()) {
-				logger.debug("Converted input value " + convertedValue);
-			}
-			if (convertedValue == null) {
-				throw new MessageConversionException(COULD_NOT_CONVERT_INPUT);
-			}
-			return convertedValue;
-		}
-
-		private boolean isJson(Object value) {
-			String v = value instanceof byte[]
-					? new String((byte[]) value, StandardCharsets.UTF_8)
-							: (value instanceof String ? (String) value : null);
-			if (v != null && JsonMapper.isJsonString(v)) {
-				return true;
-			}
-			return false;
-		}
-
-		private boolean messageNeedsConversion(Type rawType, Message<?> message) {
-			Boolean skipConversion = message.getHeaders().containsKey(FunctionProperties.SKIP_CONVERSION_HEADER)
-				? message.getHeaders().get(FunctionProperties.SKIP_CONVERSION_HEADER, Boolean.class)
-				: false;
-			if (skipConversion) {
-				return false;
-			}
-			return rawType instanceof Class<?>
-				&& !(message.getPayload() instanceof Optional)
-				&& !this.payloadIsSpecialType(message.getPayload())
-				&& !(message.getPayload().getClass().isAssignableFrom(((Class<?>) rawType)));
-		}
-
-		private boolean payloadIsSpecialType(Object payload) {
-			return "org.springframework.kafka.support.KafkaNull".equals(payload.getClass().getName());
+		/*
+		 *
+		 */
+		@SuppressWarnings("unchecked")
+		private Object convertOutputPublisherIfNecessary(Publisher publisher) {
+			return publisher instanceof Mono
+					? Mono.from(publisher).map(this::convertOutputIfNecessary)
+					: Flux.from(publisher).map(this::convertOutputIfNecessary);
 		}
 	}
-
-
 }

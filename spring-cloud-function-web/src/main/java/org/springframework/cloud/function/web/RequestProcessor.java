@@ -41,6 +41,7 @@ import reactor.core.publisher.Mono;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.cloud.function.context.FunctionCatalog;
 import org.springframework.cloud.function.context.catalog.FunctionInspector;
+import org.springframework.cloud.function.context.catalog.FunctionTypeUtils;
 import org.springframework.cloud.function.context.catalog.SimpleFunctionRegistry.FunctionInvocationWrapper;
 import org.springframework.cloud.function.context.config.RoutingFunction;
 import org.springframework.cloud.function.context.message.MessageUtils;
@@ -70,6 +71,8 @@ import org.springframework.util.ReflectionUtils;
 import org.springframework.web.server.ServerWebExchange;
 import org.springframework.web.server.ServerWebInputException;
 import org.springframework.web.server.UnsupportedMediaTypeStatusException;
+
+import net.jodah.typetools.TypeResolver;
 
 /**
  * @author Dave Syer
@@ -187,8 +190,13 @@ public class RequestProcessor {
 		if (this.inspector.isMessage(handler)) {
 			result = Flux.from(result)
 					.map(message -> MessageUtils.unpack(handler, message))
-					.doOnNext(value -> addHeaders(builder, value))
-					.map(message -> message.getPayload());
+					.doOnNext(value -> {
+						addHeaders(builder, value);
+					})
+					.map(message -> message.getPayload())
+					.doOnNext(v -> {
+						System.out.println(v);
+					});
 		}
 		else {
 			builder.headers(HeaderUtils.sanitize(request.headers()));
@@ -256,6 +264,7 @@ public class RequestProcessor {
 		}
 		else if (function instanceof FunctionInvocationWrapper) {
 			Publisher<?> result = (Publisher<?>) function.apply(flux);
+//			Publisher<?> result = null;
 			if (((FunctionInvocationWrapper) function).isConsumer()) {
 				if (result != null) {
 					((Mono) result).subscribe();
@@ -455,11 +464,33 @@ public class RequestProcessor {
 	}
 
 	private Type getItemType(Object function) {
-		Class<?> inputType = this.inspector.getInputType(function);
+
+		if (function == null || ((FunctionInvocationWrapper) function).getInputType() == Object.class) {
+			return Object.class;
+		}
+
+		Type itemType;
+		if (((FunctionInvocationWrapper) function).isInputTypePublisher() && ((FunctionInvocationWrapper) function).isInputTypeMessage()) {
+			itemType = FunctionTypeUtils.getImmediateGenericType(((FunctionInvocationWrapper) function).getInputType(), 0);
+			itemType = FunctionTypeUtils.getImmediateGenericType(itemType, 0);
+		}
+		else {
+			itemType = FunctionTypeUtils.getImmediateGenericType(((FunctionInvocationWrapper) function).getInputType(), 0);
+		}
+
+		if (itemType != null) {
+			return itemType;
+		}
+
+		Class<?> inputType = ((FunctionInvocationWrapper) function).isInputTypeMessage() || ((FunctionInvocationWrapper) function).isInputTypePublisher()
+				? TypeResolver.resolveRawClass(itemType, null)
+						: ((FunctionInvocationWrapper) function).getRawInputType();
 		if (!Collection.class.isAssignableFrom(inputType)) {
 			return inputType;
 		}
-		Type type = this.inspector.getRegistration(function).getType().getType();
+
+//		Type type = this.inspector.getRegistration(function).getType().getType();
+		Type type = ((FunctionInvocationWrapper) function).getInputType();
 		if (type instanceof ParameterizedType) {
 			type = ((ParameterizedType) type).getActualTypeArguments()[0];
 		}

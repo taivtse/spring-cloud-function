@@ -129,7 +129,9 @@ public final class FunctionTypeUtils {
 
 	public static Type discoverFunctionTypeFromFunctionalObject(Object functionalObject) {
 		if (functionalObject instanceof FunctionInvocationWrapper) {
-			return ((FunctionInvocationWrapper) functionalObject).getFunctionType();
+//			return ((FunctionInvocationWrapper) functionalObject).getFunctionType();
+//			return null;
+			throw new UnsupportedOperationException("Code is temporarily comented");
 		}
 		else {
 			return discoverFunctionTypeFromClass(functionalObject.getClass());
@@ -282,6 +284,9 @@ public final class FunctionTypeUtils {
 
 	public static boolean isMessage(Type type) {
 		if (isPublisher(type)) {
+			type = getImmediateGenericType(type, 0);
+		}
+		if (type instanceof ParameterizedType && !type.getTypeName().startsWith("org.springframework.messaging.Message")) {
 			type = getImmediateGenericType(type, 0);
 		}
 		return type.getTypeName().startsWith("org.springframework.messaging.Message");

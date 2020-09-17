@@ -18,7 +18,7 @@ package org.springframework.cloud.function.context.catalog;
 
 import java.util.function.BiFunction;
 
-import org.springframework.cloud.function.context.catalog.SimpleFunctionRegistry.FunctionInvocationWrapper;
+import org.springframework.cloud.function.context.catalog.SimpleFunctionRegistryOld.FunctionInvocationWrapper;
 import org.springframework.messaging.Message;
 
 /**
