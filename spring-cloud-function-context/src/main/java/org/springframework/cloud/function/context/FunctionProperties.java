@@ -17,7 +17,6 @@
 package org.springframework.cloud.function.context;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
-import org.springframework.util.MimeTypeUtils;
 
 /**
  *
@@ -34,12 +33,18 @@ public class FunctionProperties {
 	public final static String PREFIX = "spring.cloud.function";
 
 	/**
-	 * Name of he header to be used to instruct function catalog to skip type conversion.
+	 * Name of the header to be used to instruct function catalog to skip type conversion.
 	 */
 	public final static String SKIP_CONVERSION_HEADER = "skip-type-conversion";
 
+	/**
+	 * Name of the header to be used to instruct function to apply this content type for output conversion.
+	 */
 	public final static String EXPECT_CONTENT_TYPE_HEADER = "expected-content-type";
 
+	/**
+	 * The name of function definition property.
+	 */
 	public final static String FUNCTION_DEFINITION = PREFIX + ".definition";
 
 	/**

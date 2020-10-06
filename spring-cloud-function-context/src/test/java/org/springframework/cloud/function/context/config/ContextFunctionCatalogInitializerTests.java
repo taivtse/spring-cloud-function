@@ -40,8 +40,6 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.cloud.function.context.FunctionCatalog;
 import org.springframework.cloud.function.context.FunctionRegistration;
 import org.springframework.cloud.function.context.FunctionType;
-import org.springframework.cloud.function.context.catalog.FunctionInspector;
-import org.springframework.cloud.function.context.catalog.SimpleFunctionRegistry.FunctionInvocationWrapper;
 import org.springframework.cloud.function.context.scan.TestFunction;
 import org.springframework.context.ApplicationContextInitializer;
 import org.springframework.context.annotation.Bean;
@@ -60,8 +58,6 @@ public class ContextFunctionCatalogInitializerTests {
 	private GenericApplicationContext context;
 
 	private FunctionCatalog catalog;
-
-	private FunctionInspector inspector;
 
 	@AfterEach
 	public void close() {
@@ -217,7 +213,6 @@ public class ContextFunctionCatalogInitializerTests {
 				this.context).postProcessBeanDefinitionRegistry(this.context);
 		this.context.refresh();
 		this.catalog = this.context.getBean(FunctionCatalog.class);
-		this.inspector = this.context.getBean(FunctionInspector.class);
 	}
 
 	protected static class EmptyConfiguration

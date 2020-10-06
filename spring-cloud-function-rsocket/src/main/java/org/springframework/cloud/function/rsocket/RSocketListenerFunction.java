@@ -16,7 +16,6 @@
 
 package org.springframework.cloud.function.rsocket;
 
-import java.lang.reflect.Type;
 import java.util.function.Function;
 
 import io.rsocket.frame.FrameType;

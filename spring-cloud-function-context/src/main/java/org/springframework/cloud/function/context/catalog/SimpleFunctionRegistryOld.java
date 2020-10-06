@@ -409,6 +409,12 @@ public class SimpleFunctionRegistryOld implements FunctionRegistry, FunctionInsp
 		return Collections.singletonList(functionName);
 	}
 
+
+	@Override
+	public <T> T lookup(Class<?> type, String functionDefinition, String... expectedOutputMimeTypes) {
+		// TODO Auto-generated method stub
+		return null;
+	}
 	/**
 	 * Single wrapper for all Suppliers, Functions and Consumers managed by this
 	 * catalog.
@@ -897,12 +903,4 @@ public class SimpleFunctionRegistryOld implements FunctionRegistry, FunctionInsp
 			return "org.springframework.kafka.support.KafkaNull".equals(payload.getClass().getName());
 		}
 	}
-
-	@Override
-	public <T> T lookup(Class<?> type, String functionDefinition, String... expectedOutputMimeTypes) {
-		// TODO Auto-generated method stub
-		return null;
-	}
-
-
 }

@@ -16,8 +16,6 @@
 
 package org.springframework.cloud.function.context.config;
 
-import java.lang.reflect.Field;
-import java.util.Map;
 import java.util.function.Function;
 
 import org.apache.commons.logging.Log;
@@ -28,17 +26,13 @@ import reactor.core.publisher.Mono;
 
 import org.springframework.cloud.function.context.FunctionCatalog;
 import org.springframework.cloud.function.context.FunctionProperties;
-import org.springframework.cloud.function.context.catalog.FunctionInspector;
-import org.springframework.cloud.function.context.catalog.SimpleFunctionRegistry;
 import org.springframework.cloud.function.context.catalog.SimpleFunctionRegistry.FunctionInvocationWrapper;
 import org.springframework.context.expression.MapAccessor;
 import org.springframework.expression.Expression;
 import org.springframework.expression.spel.standard.SpelExpressionParser;
 import org.springframework.expression.spel.support.StandardEvaluationContext;
 import org.springframework.messaging.Message;
-import org.springframework.messaging.MessageHeaders;
 import org.springframework.util.Assert;
-import org.springframework.util.ReflectionUtils;
 import org.springframework.util.StringUtils;
 
 
@@ -155,7 +149,6 @@ public class RoutingFunction implements Function<Object, Object> {
 				+ "spring.cloud.function.routing-expression' as application properties.");
 	}
 
-	@SuppressWarnings("rawtypes")
 	private FunctionInvocationWrapper functionFromDefinition(String definition) {
 		FunctionInvocationWrapper function = functionCatalog.lookup(definition);
 		Assert.notNull(function, "Failed to lookup function to route based on the value of 'spring.cloud.function.definition' property '"
@@ -166,7 +159,6 @@ public class RoutingFunction implements Function<Object, Object> {
 		return function;
 	}
 
-	@SuppressWarnings("rawtypes")
 	private FunctionInvocationWrapper functionFromExpression(String routingExpression, Object input) {
 		Expression expression = spelParser.parseExpression(routingExpression);
 		String functionName = expression.getValue(this.evalContext, input, String.class);

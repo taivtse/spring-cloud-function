@@ -18,16 +18,13 @@ package org.springframework.cloud.function.context.catalog;
 
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
-import java.util.Collections;
-import java.util.Set;
-
-import org.springframework.cloud.function.context.FunctionRegistration;
-import org.springframework.cloud.function.context.catalog.SimpleFunctionRegistry.FunctionInvocationWrapper;
-import org.springframework.cloud.function.context.config.RoutingFunction;
 
 import net.jodah.typetools.TypeResolver;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+
+import org.springframework.cloud.function.context.FunctionRegistration;
+import org.springframework.cloud.function.context.catalog.SimpleFunctionRegistry.FunctionInvocationWrapper;
 
 /**
  * @author Dave Syer
@@ -43,14 +40,6 @@ public interface FunctionInspector {
 		}
 
 		return ((FunctionInvocationWrapper) function).isInputTypeMessage();
-
-
-
-//		FunctionRegistration<?> registration = getRegistration(function);
-//		if (registration != null && registration.getTarget() instanceof RoutingFunction) {
-//			return true;
-//		}
-//		return registration == null ? false : registration.getType().isMessage();
 	}
 
 	default Class<?> getInputType(Object function) {

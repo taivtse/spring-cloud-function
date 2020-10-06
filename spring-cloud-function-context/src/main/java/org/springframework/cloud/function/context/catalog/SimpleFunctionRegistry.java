@@ -1,3 +1,19 @@
+/*
+ * Copyright 2019-2020 the original author or authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.springframework.cloud.function.context.catalog;
 
 import java.lang.reflect.Field;
@@ -10,6 +26,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.function.Consumer;
@@ -17,9 +34,13 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
+import net.jodah.typetools.TypeResolver;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.reactivestreams.Publisher;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
+
 import org.springframework.beans.factory.BeanFactory;
 import org.springframework.cloud.function.context.FunctionCatalog;
 import org.springframework.cloud.function.context.FunctionProperties;
@@ -39,9 +60,7 @@ import org.springframework.util.ObjectUtils;
 import org.springframework.util.ReflectionUtils;
 import org.springframework.util.StringUtils;
 
-import net.jodah.typetools.TypeResolver;
-import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
+
 /**
  * Implementation of {@link FunctionCatalog} and {@link FunctionRegistry} which
  * does not depend on Spring's {@link BeanFactory}.
@@ -341,16 +360,25 @@ public class SimpleFunctionRegistry implements FunctionRegistry, FunctionInspect
 						: ResolvableType.forType(this.inputType)).getType();
 			}
 			else if (this.inputType == null && afterWrapper.outputType != null) {
-				composedFunctionType = ResolvableType.forClassWithGenerics(Supplier.class, this.outputType == null
-						? null
-						: ResolvableType.forType(afterWrapper.outputType)).getType();
+				ResolvableType composedOutputType;
+				if (FunctionTypeUtils.isFlux(this.outputType)) {
+					composedOutputType = ResolvableType.forClassWithGenerics(Flux.class, ResolvableType.forType(afterWrapper.outputType));
+				}
+				else if (FunctionTypeUtils.isMono(this.outputType)) {
+					composedOutputType = ResolvableType.forClassWithGenerics(Mono.class, ResolvableType.forType(afterWrapper.outputType));
+				}
+				else {
+					composedOutputType = ResolvableType.forType(afterWrapper.outputType);
+				}
+
+				composedFunctionType = ResolvableType.forClassWithGenerics(Supplier.class, composedOutputType).getType();
 			}
 			else if (this.outputType == null) {
 				throw new IllegalArgumentException("Can NOT compose anything with Consumer");
 			}
 			else {
 				composedFunctionType = ResolvableType.forClassWithGenerics(Function.class,
-						ResolvableType.forType(this.inputType) ,
+						ResolvableType.forType(this.inputType),
 						ResolvableType.forType(((FunctionInvocationWrapper) after).outputType)).getType();
 			}
 
@@ -378,7 +406,7 @@ public class SimpleFunctionRegistry implements FunctionRegistry, FunctionInspect
 		}
 
 		/**
-		 * Will wrap the result in a Message if necessary and will copy input headers to the output message
+		 * Will wrap the result in a Message if necessary and will copy input headers to the output message.
 		 */
 		@SuppressWarnings("unchecked")
 		private Object enrichInvocationResult(Object input, Object result) {
@@ -489,7 +517,7 @@ public class SimpleFunctionRegistry implements FunctionRegistry, FunctionInspect
 				convertedInput = this.convertInputPublisherIfNecessary((Publisher) input);
 			}
 			else if (input instanceof Message) {
-				convertedInput = this.convertInputMessageIfNecessary(input);
+				convertedInput = this.convertInputMessageIfNecessary((Message) input);
 			}
 			else {
 				Class<?> type = this.isInputTypePublisher() || this.isInputTypeMessage()
@@ -516,17 +544,20 @@ public class SimpleFunctionRegistry implements FunctionRegistry, FunctionInspect
 			return convertedInput;
 		}
 
-		private Object convertInputMessageIfNecessary(Object input) {
-			Object convertedInput = input;
+		private Object convertInputMessageIfNecessary(Message message) {
+			if (message.getPayload() instanceof Optional) {
+				return message;
+			}
+			Object convertedInput = message;
 			Type type = FunctionTypeUtils.getGenericType(this.inputType);
 			Class rawType = type instanceof ParameterizedType ? (Class) ((ParameterizedType) type).getRawType() : (Class) type;
 
 			convertedInput = FunctionTypeUtils.isTypeCollection(type)
-					? SimpleFunctionRegistry.this.messageConverter.fromMessage(((Message) input), rawType, type)
-					: SimpleFunctionRegistry.this.messageConverter.fromMessage(((Message) input), rawType);
+					? SimpleFunctionRegistry.this.messageConverter.fromMessage(message, rawType, type)
+					: SimpleFunctionRegistry.this.messageConverter.fromMessage(message, rawType);
 
 			if (this.isInputTypeMessage()) {
-				convertedInput = MessageBuilder.withPayload(convertedInput).copyHeaders(((Message) input).getHeaders()).build();
+				convertedInput = MessageBuilder.withPayload(convertedInput).copyHeaders(message.getHeaders()).build();
 			}
 			return convertedInput;
 		}
@@ -577,18 +608,15 @@ public class SimpleFunctionRegistry implements FunctionRegistry, FunctionInspect
 		@SuppressWarnings("unchecked")
 		private Object convertMultipleOutputValuesIfNecessary(Object output) {
 			Collection outputCollection = (Collection) output;
-			Collection convertedOutputCollection = this.buildOutputCollection(output);
+			Collection convertedOutputCollection = output instanceof List ? new ArrayList<>() : new TreeSet<>();
 			for (Object outToConvert : outputCollection) {
 				Object result = this.convertOutputIfNecessary(outToConvert);
-				Assert.notNull(result, "Failed to convert output");
+				Assert.notNull(result, () -> "Failed to convert output '" + output + "'");
 				convertedOutputCollection.add(result);
 			}
 			return convertedOutputCollection;
 		}
 
-		private Collection buildOutputCollection(Object result) {
-			return result instanceof List ? new ArrayList<>() : new TreeSet<>();
-		}
 
 		/*
 		 *

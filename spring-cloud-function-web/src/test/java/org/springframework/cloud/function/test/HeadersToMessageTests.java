@@ -28,7 +28,7 @@ import org.springframework.cloud.function.context.test.FunctionalSpringBootTest;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.support.MessageBuilder;
 import org.springframework.test.web.reactive.server.WebTestClient;
-import org.springframework.test.web.reactive.server.WebTestClient.ResponseSpec;
+
 
 /**
  * @author Oleg Zhurakousky

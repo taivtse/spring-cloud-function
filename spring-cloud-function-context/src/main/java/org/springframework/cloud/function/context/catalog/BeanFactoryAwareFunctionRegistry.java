@@ -1,26 +1,39 @@
+/*
+ * Copyright 2019-2020 the original author or authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.springframework.cloud.function.context.catalog;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Type;
 import java.util.Arrays;
-import java.util.HashSet;
 import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
-import java.util.stream.Stream;
 
 import org.aopalliance.intercept.MethodInterceptor;
 import org.aopalliance.intercept.MethodInvocation;
+
 import org.springframework.aop.framework.ProxyFactory;
 import org.springframework.beans.BeansException;
 import org.springframework.beans.factory.FactoryBean;
-import org.springframework.beans.factory.InitializingBean;
-import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.BeanFactoryAnnotationUtils;
 import org.springframework.cloud.function.context.FunctionProperties;
 import org.springframework.cloud.function.context.FunctionRegistration;
 import org.springframework.cloud.function.context.FunctionType;
-import org.springframework.cloud.function.context.catalog.SimpleFunctionRegistry.FunctionInvocationWrapper;
 import org.springframework.cloud.function.context.config.FunctionContextUtils;
 import org.springframework.cloud.function.context.config.RoutingFunction;
 import org.springframework.cloud.function.json.JsonMapper;
@@ -28,9 +41,7 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationContextAware;
 import org.springframework.context.support.GenericApplicationContext;
 import org.springframework.core.convert.ConversionService;
-import org.springframework.core.env.Environment;
 import org.springframework.messaging.converter.CompositeMessageConverter;
-import org.springframework.util.Assert;
 import org.springframework.util.StringUtils;
 
 public class BeanFactoryAwareFunctionRegistry extends SimpleFunctionRegistry implements ApplicationContextAware {
@@ -100,35 +111,55 @@ public class BeanFactoryAwareFunctionRegistry extends SimpleFunctionRegistry imp
 				if (functionRegistratioinNames.contains(functionName)) {
 					logger.info("Skipping function '" + functionName + "' since it is already present");
 				}
-				else if (this.applicationContext.containsBean(functionName)) {
-					Assert.isTrue(this.applicationContext.containsBean(functionName),
-							"Function '" + functionName + "' can't be located in BeanFactory");
-					Object functionCandidate = this.applicationContext.getBean(functionName);
+				else {
+					Object functionCandidate = this.discoverFunctionInBeanFactory(functionName);
+					if (functionCandidate != null) {
+						Type functionType = null;
+						FunctionRegistration functionRegistration = null;
+						if (functionCandidate instanceof FunctionRegistration) {
+							functionRegistration = (FunctionRegistration) functionCandidate;
+						}
+						else if (this.isFunctionPojo(functionCandidate)) {
+							Method functionalMethod = FunctionTypeUtils.discoverFunctionalMethod(functionCandidate.getClass());
+							functionCandidate = this.proxyTarget(functionCandidate, functionalMethod);
+							functionType = FunctionTypeUtils.fromFunctionMethod(functionalMethod);
+						}
+						else {
+							functionType = this.discoverFunctionType(functionCandidate, functionName);
+						}
+						if (functionRegistration == null) {
+							functionRegistration = new FunctionRegistration(functionCandidate, functionName).type(functionType);
+						}
 
-					Type functionType = null;
-					FunctionRegistration functionRegistration = null;
-					if (functionCandidate instanceof FunctionRegistration) {
-						functionRegistration = (FunctionRegistration) functionCandidate;
-					}
-					else if (this.isFunctionPojo(functionCandidate)) {
-						Method functionalMethod = FunctionTypeUtils.discoverFunctionalMethod(functionCandidate.getClass());
-						functionCandidate = this.proxyTarget(functionCandidate, functionalMethod);
-						functionType = FunctionTypeUtils.fromFunctionMethod(functionalMethod);
+						this.register(functionRegistration);
 					}
 					else {
-						functionType = this.discoverFunctionType(functionCandidate, functionName);
+						if (logger.isDebugEnabled()) {
+							logger.debug("Function '" + functionName + "' is not available in FunctionCatalog or BeanFactory");
+						}
 					}
-					if (functionRegistration == null) {
-						functionRegistration = new FunctionRegistration(functionCandidate, functionName).type(functionType);
-					}
-
-					this.register(functionRegistration);
 				}
 			}
 			function = super.doLookup(type, functionDefinition, expectedOutputMimeTypes);
 		}
 
 		return (T) function;
+	}
+
+	private Object discoverFunctionInBeanFactory(String functionName) {
+		Object functionCandidate = null;
+		if (this.applicationContext.containsBean(functionName)) {
+			functionCandidate = this.applicationContext.getBean(functionName);
+		}
+		else {
+			try {
+				functionCandidate = BeanFactoryAnnotationUtils.qualifiedBeanOfType(this.applicationContext.getBeanFactory(), Object.class, functionName);
+			}
+			catch (Exception e) {
+				// ignore since there is no safe isAvailable-kind of method
+			}
+		}
+		return functionCandidate;
 	}
 
 	@Override

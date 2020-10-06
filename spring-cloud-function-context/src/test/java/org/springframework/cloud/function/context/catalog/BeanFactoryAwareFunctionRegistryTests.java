@@ -46,7 +46,6 @@ import org.springframework.cloud.function.context.FunctionRegistration;
 import org.springframework.cloud.function.context.FunctionRegistry;
 import org.springframework.cloud.function.context.FunctionType;
 import org.springframework.cloud.function.context.catalog.SimpleFunctionRegistry.FunctionInvocationWrapper;
-import org.springframework.cloud.function.context.catalog.SimpleFunctionRegistry.FunctionInvocationWrapper;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -539,7 +538,6 @@ public class BeanFactoryAwareFunctionRegistryTests {
 		}
 	}
 
-	@SuppressWarnings("unchecked")
 	@EnableAutoConfiguration
 	public static class CollectionOutConfiguration {
 

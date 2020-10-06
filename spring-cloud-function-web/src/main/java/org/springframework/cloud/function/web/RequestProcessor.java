@@ -32,6 +32,7 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Stream;
 
+import net.jodah.typetools.TypeResolver;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.reactivestreams.Publisher;
@@ -71,8 +72,6 @@ import org.springframework.util.ReflectionUtils;
 import org.springframework.web.server.ServerWebExchange;
 import org.springframework.web.server.ServerWebInputException;
 import org.springframework.web.server.UnsupportedMediaTypeStatusException;
-
-import net.jodah.typetools.TypeResolver;
 
 /**
  * @author Dave Syer
@@ -187,16 +186,13 @@ public class RequestProcessor {
 	private Mono<ResponseEntity<?>> response(FunctionWrapper request, Object handler,
 			Publisher<?> result, Boolean single, boolean getter) {
 		BodyBuilder builder = ResponseEntity.ok();
-		if (this.inspector.isMessage(handler)) {
+		if (((FunctionInvocationWrapper) handler).isInputTypeMessage()) {
 			result = Flux.from(result)
 					.map(message -> MessageUtils.unpack(handler, message))
 					.doOnNext(value -> {
 						addHeaders(builder, value);
 					})
-					.map(message -> message.getPayload())
-					.doOnNext(v -> {
-						System.out.println(v);
-					});
+					.map(message -> message.getPayload());
 		}
 		else {
 			builder.headers(HeaderUtils.sanitize(request.headers()));

@@ -19,6 +19,7 @@ package org.springframework.cloud.function.context.catalog;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -40,14 +41,13 @@ import org.springframework.cloud.function.context.FunctionRegistry;
 import org.springframework.cloud.function.context.FunctionType;
 import org.springframework.cloud.function.context.HybridFunctionalRegistrationTests.UppercaseFunction;
 import org.springframework.cloud.function.context.catalog.SimpleFunctionRegistry.FunctionInvocationWrapper;
-import org.springframework.cloud.function.context.catalog.SimpleFunctionRegistry.FunctionInvocationWrapper;
 import org.springframework.cloud.function.context.config.JsonMessageConverter;
-import org.springframework.cloud.function.context.config.NegotiatingMessageConverterWrapper;
 import org.springframework.cloud.function.json.GsonMapper;
 import org.springframework.cloud.function.json.JacksonMapper;
 import org.springframework.cloud.function.json.JsonMapper;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
+import org.springframework.core.ResolvableType;
 import org.springframework.core.convert.ConversionService;
 import org.springframework.core.convert.support.DefaultConversionService;
 import org.springframework.lang.Nullable;
@@ -77,9 +77,9 @@ public class SimpleFunctionRegistryTests {
 	public void before() {
 		List<MessageConverter> messageConverters = new ArrayList<>();
 		JsonMapper jsonMapper = new GsonMapper(new Gson());
-		messageConverters.add(NegotiatingMessageConverterWrapper.wrap(new JsonMessageConverter(jsonMapper)));
-		messageConverters.add(NegotiatingMessageConverterWrapper.wrap(new ByteArrayMessageConverter()));
-		messageConverters.add(NegotiatingMessageConverterWrapper.wrap(new StringMessageConverter()));
+		messageConverters.add(new JsonMessageConverter(jsonMapper));
+		messageConverters.add(new ByteArrayMessageConverter());
+		messageConverters.add(new StringMessageConverter());
 		this.messageConverter = new CompositeMessageConverter(messageConverters);
 
 		this.conversionService = new DefaultConversionService();
@@ -278,6 +278,96 @@ public class SimpleFunctionRegistryTests {
 		Function function = catalog.lookup("func");
 		Object result = function.apply(MessageBuilder.withPayload("Jim Lahey").setHeader(MessageHeaders.CONTENT_TYPE, "text/person").build());
 		assertThat(result).isEqualTo("Jim Lahey");
+	}
+
+	@Test
+	public void lookup() {
+		SimpleFunctionRegistry functionRegistry = new SimpleFunctionRegistry(this.conversionService, this.messageConverter,
+				new JacksonMapper(new ObjectMapper()));
+		FunctionInvocationWrapper function = functionRegistry.lookup("uppercase");
+		assertThat(function).isNull();
+
+		Function userFunction = uppercase();
+		FunctionRegistration functionRegistration = new FunctionRegistration(userFunction, "uppercase")
+				.type(FunctionType.from(String.class).to(String.class));
+		functionRegistry.register(functionRegistration);
+
+		function = functionRegistry.lookup("uppercase");
+		assertThat(function).isNotNull();
+	}
+
+
+	@Test
+	public void lookupDefaultName() {
+		SimpleFunctionRegistry functionRegistry = new SimpleFunctionRegistry(this.conversionService, this.messageConverter,
+				new JacksonMapper(new ObjectMapper()));
+		Function userFunction = uppercase();
+		FunctionRegistration functionRegistration = new FunctionRegistration(userFunction, "uppercase")
+				.type(FunctionType.from(String.class).to(String.class));
+		functionRegistry.register(functionRegistration);
+
+		FunctionInvocationWrapper function = functionRegistry.lookup("");
+		assertThat(function).isNotNull();
+	}
+
+	@Test
+	public void lookupWithCompositionFunctionAndConsumer() {
+		SimpleFunctionRegistry functionRegistry = new SimpleFunctionRegistry(this.conversionService, this.messageConverter,
+				new JacksonMapper(new ObjectMapper()));
+
+		Object userFunction = uppercase();
+		FunctionRegistration functionRegistration = new FunctionRegistration(userFunction, "uppercase")
+				.type(FunctionType.from(String.class).to(String.class));
+		functionRegistry.register(functionRegistration);
+
+		userFunction = consumer();
+		functionRegistration = new FunctionRegistration(userFunction, "consumer")
+				.type(ResolvableType.forClassWithGenerics(Consumer.class, Integer.class).getType());
+		functionRegistry.register(functionRegistration);
+
+		FunctionInvocationWrapper functionWrapper = functionRegistry.lookup("uppercase|consumer");
+
+		functionWrapper.apply("123");
+	}
+
+	@Test
+	public void lookupWithReactiveConsumer() {
+		SimpleFunctionRegistry functionRegistry = new SimpleFunctionRegistry(this.conversionService, this.messageConverter,
+				new JacksonMapper(new ObjectMapper()));
+
+		Object userFunction = reactiveConsumer();
+
+		FunctionRegistration functionRegistration = new FunctionRegistration(userFunction, "reactiveConsumer")
+				.type(ResolvableType.forClassWithGenerics(Consumer.class, ResolvableType.forClassWithGenerics(Flux.class, Integer.class)).getType());
+		functionRegistry.register(functionRegistration);
+
+		FunctionInvocationWrapper functionWrapper = functionRegistry.lookup("reactiveConsumer");
+
+		functionWrapper.apply("123");
+	}
+
+
+	public Function<String, String> uppercase() {
+		return v -> v.toUpperCase();
+	}
+
+
+	public Function<Object, Integer> hash() {
+		return v -> v.hashCode();
+	}
+
+	public Supplier<Integer> supplier() {
+		return () -> 4;
+	}
+
+	public Consumer<Integer> consumer() {
+		return System.out::println;
+	}
+
+	public Consumer<Flux<Integer>> reactiveConsumer() {
+		return flux -> flux.subscribe(v -> {
+			System.out.println(v);
+		});
 	}
 
 	private FunctionCatalog configureCatalog(Class<?>... configClass) {
