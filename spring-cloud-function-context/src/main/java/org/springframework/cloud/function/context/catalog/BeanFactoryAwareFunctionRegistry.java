@@ -119,10 +119,14 @@ public class BeanFactoryAwareFunctionRegistry extends SimpleFunctionRegistry imp
 						if (functionCandidate instanceof FunctionRegistration) {
 							functionRegistration = (FunctionRegistration) functionCandidate;
 						}
-						else if (this.isFunctionPojo(functionCandidate)) {
+						else if (this.isFunctionPojo(functionCandidate, functionName)) {
 							Method functionalMethod = FunctionTypeUtils.discoverFunctionalMethod(functionCandidate.getClass());
 							functionCandidate = this.proxyTarget(functionCandidate, functionalMethod);
 							functionType = FunctionTypeUtils.fromFunctionMethod(functionalMethod);
+						}
+						else if (this.isSpecialFunctionRegistration(functionNames, functionName)) {
+							functionRegistration = this.applicationContext
+									.getBean(functionName + FunctionRegistration.REGISTRATION_NAME_SUFFIX, FunctionRegistration.class);
 						}
 						else {
 							functionType = this.discoverFunctionType(functionCandidate, functionName);
@@ -208,9 +212,28 @@ public class BeanFactoryAwareFunctionRegistry extends SimpleFunctionRegistry imp
 		return functionDefinition;
 	}
 
-	private boolean isFunctionPojo(Object function) {
-		return !function.getClass().isSynthetic()
-			&& !(function instanceof Supplier) && !(function instanceof Function) && !(function instanceof Consumer);
+	private boolean isFunctionPojo(Object functionCandidate, String functionName) {
+		return !functionCandidate.getClass().isSynthetic()
+			&& !(functionCandidate instanceof Supplier)
+			&& !(functionCandidate instanceof Function)
+			&& !(functionCandidate instanceof Consumer)
+			&& !this.applicationContext.containsBean(functionName + FunctionRegistration.REGISTRATION_NAME_SUFFIX);
+	}
+
+	/**
+	 * At the moment 'special function registration' simply implies that a bean under the provided functionName
+	 * may have already been wrapped and registered as FunuctionRegistration with BeanFactory under the name of
+	 * the function suffixed with {@link FunctionRegistration#REGISTRATION_NAME_SUFFIX}
+	 * (e.g., 'myKotlinFunction_registration')
+	 * <br><br>
+	 * At the moment only Kotlin module does this
+	 *
+	 * @param functionCandidate candidate for FunctionInvocationWrapper instance
+	 * @param functionName the name of the function
+	 * @return true if this function candidate qualifies
+	 */
+	private boolean isSpecialFunctionRegistration(Object functionCandidate, String functionName) {
+		return this.applicationContext.containsBean(functionName + FunctionRegistration.REGISTRATION_NAME_SUFFIX);
 	}
 
 	private Object proxyTarget(Object targetFunction, Method actualMethodToCall) {
