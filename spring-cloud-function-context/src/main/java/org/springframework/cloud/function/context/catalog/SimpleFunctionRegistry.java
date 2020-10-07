@@ -40,6 +40,8 @@ import org.apache.commons.logging.LogFactory;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.util.function.Tuple2;
+import reactor.util.function.Tuples;
 
 import org.springframework.beans.factory.BeanFactory;
 import org.springframework.cloud.function.context.FunctionCatalog;
@@ -290,7 +292,7 @@ public class SimpleFunctionRegistry implements FunctionRegistry, FunctionInspect
 				result = this.convertOutputIfNecessary(result);
 			}
 
-			result = this.enrichInvocationResult(input, result);
+			//result = this.enrichInvocationResult(input, result);
 
 			return result;
 		}
@@ -323,7 +325,7 @@ public class SimpleFunctionRegistry implements FunctionRegistry, FunctionInspect
 		}
 
 		public boolean isInputTypePublisher() {
-			return FunctionTypeUtils.isReactive(this.inputType);
+			return this.inputType != null && FunctionTypeUtils.isReactive(this.inputType);
 		}
 
 		public boolean isOutputTypePublisher() {
@@ -428,7 +430,7 @@ public class SimpleFunctionRegistry implements FunctionRegistry, FunctionInspect
 			if (!(input instanceof Publisher) && this.isInputTypePublisher()) {
 				return input == null
 						? FunctionTypeUtils.isMono(this.inputType) ? Mono.empty() : Flux.empty()
-								: FunctionTypeUtils.isMono(this.inputType) ? Mono.just(input) : Flux.just(input);
+						: FunctionTypeUtils.isMono(this.inputType) ? Mono.just(input) : Flux.just(input);
 			}
 			return input;
 		}
@@ -464,11 +466,24 @@ public class SimpleFunctionRegistry implements FunctionRegistry, FunctionInspect
 			}
 			else if (convertedInput instanceof Publisher) {
 				result = convertedInput instanceof Mono
-						? Mono.from((Publisher) convertedInput).map(value -> ((Function) this.target).apply(value))
-						: Flux.from((Publisher) convertedInput).map(value -> ((Function) this.target).apply(value));
+						? Mono.from((Publisher) convertedInput).map(value -> this.invokeFunctionAndEnrichResultIfNecessary(value))
+						: Flux.from((Publisher) convertedInput).map(value -> this.invokeFunctionAndEnrichResultIfNecessary(value));
 			}
 			else {
-				result = ((Function) this.target).apply(convertedInput);
+				result = this.invokeFunctionAndEnrichResultIfNecessary(convertedInput);
+			}
+			return result;
+		}
+
+		@SuppressWarnings("unchecked")
+		private Object invokeFunctionAndEnrichResultIfNecessary(Object value) {
+			Object inputValue = value;
+			if (value instanceof Tuple2) {
+				inputValue = ((Tuple2) value).getT1();
+			}
+			Object result = ((Function) this.target).apply(inputValue);
+			if (value instanceof Tuple2) {
+				result = this.enrichInvocationResult(((Tuple2) value).getT2(), result);
 			}
 			return result;
 		}
@@ -518,6 +533,9 @@ public class SimpleFunctionRegistry implements FunctionRegistry, FunctionInspect
 			}
 			else if (input instanceof Message) {
 				convertedInput = this.convertInputMessageIfNecessary((Message) input);
+				if (this.isPropagateInputHeaders((Message) input)) {
+					convertedInput = Tuples.of(convertedInput, input);
+				}
 			}
 			else {
 				Class<?> type = this.isInputTypePublisher() || this.isInputTypeMessage()
@@ -536,12 +554,31 @@ public class SimpleFunctionRegistry implements FunctionRegistry, FunctionInspect
 				}
 			}
 			// wrap in Message if necessary
-			if (this.inputType != null && FunctionTypeUtils.isMessage(this.inputType)
-					&& !(convertedInput instanceof Message) && !(convertedInput instanceof Publisher)) {
-				convertedInput = MessageBuilder.withPayload(convertedInput).build();
+			if (this.isWrapConvertedInputInMessage(convertedInput)) {
+				if (convertedInput instanceof Tuple2) {
+					if (!(((Tuple2) convertedInput).getT1() instanceof Message)) {
+						convertedInput = Tuples.of(MessageBuilder.withPayload(((Tuple2) convertedInput).getT1()).build(), ((Tuple2) convertedInput).getT2());
+					}
+				}
+				else {
+					convertedInput = MessageBuilder.withPayload(convertedInput).build();
+				}
 			}
 
 			return convertedInput;
+		}
+
+
+
+		private boolean isWrapConvertedInputInMessage(Object convertedInput) {
+			return this.inputType != null
+					&& FunctionTypeUtils.isMessage(this.inputType)
+					&& !(convertedInput instanceof Message)
+					&& !(convertedInput instanceof Publisher);
+		}
+
+		private boolean isPropagateInputHeaders(Message message) {
+			return !this.isInputTypePublisher() && this.isFunction();// && message.getHeaders().containsKey("scf-func-name");
 		}
 
 		private Object convertInputMessageIfNecessary(Message message) {
@@ -624,8 +661,8 @@ public class SimpleFunctionRegistry implements FunctionRegistry, FunctionInspect
 		@SuppressWarnings("unchecked")
 		private Object convertInputPublisherIfNecessary(Publisher publisher) {
 			return publisher instanceof Mono
-					? Mono.from(publisher).map(this::convertInputIfNecessary)
-					: Flux.from(publisher).map(this::convertInputIfNecessary);
+					? Mono.from(publisher).map(this::convertInputIfNecessary).doOnError(ex -> logger.error("Failed to convert input", (Throwable) ex))
+					: Flux.from(publisher).map(this::convertInputIfNecessary).doOnError(ex -> logger.error("Failed to convert input", (Throwable) ex));
 		}
 
 		/*
@@ -634,8 +671,8 @@ public class SimpleFunctionRegistry implements FunctionRegistry, FunctionInspect
 		@SuppressWarnings("unchecked")
 		private Object convertOutputPublisherIfNecessary(Publisher publisher) {
 			return publisher instanceof Mono
-					? Mono.from(publisher).map(this::convertOutputIfNecessary)
-					: Flux.from(publisher).map(this::convertOutputIfNecessary);
+					? Mono.from(publisher).map(this::convertOutputIfNecessary).doOnError(ex -> logger.error("Failed to convert output", (Throwable) ex))
+					: Flux.from(publisher).map(this::convertOutputIfNecessary).doOnError(ex -> logger.error("Failed to convert output", (Throwable) ex));
 		}
 	}
 }
