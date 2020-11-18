@@ -46,8 +46,6 @@ import reactor.util.function.Tuples;
 
 import org.springframework.beans.factory.BeanFactory;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.cloud.function.cloudevent.CloudEventAttributes;
-import org.springframework.cloud.function.cloudevent.CloudEventMessageUtils;
 import org.springframework.cloud.function.context.FunctionCatalog;
 import org.springframework.cloud.function.context.FunctionProperties;
 import org.springframework.cloud.function.context.FunctionRegistration;
@@ -68,6 +66,9 @@ import org.springframework.util.CollectionUtils;
 import org.springframework.util.ObjectUtils;
 import org.springframework.util.ReflectionUtils;
 import org.springframework.util.StringUtils;
+
+import io.cloudevents.spring.core.CloudEventAttributeUtils;
+import io.cloudevents.spring.messaging.CloudEventMessageUtils;
 
 
 /**
@@ -910,7 +911,7 @@ public class SimpleFunctionRegistry implements FunctionRegistry, FunctionInspect
 		 * case that requires it since it may contain forwarding url
 		 */
 		private boolean containsRetainMessageSignalInHeaders(Message message) {
-			if (new CloudEventAttributes(message.getHeaders()).isValidCloudEvent()) {
+			if (CloudEventAttributeUtils.toAttributes(message.getHeaders()).isValidCloudEvent()) {
 				return true;
 			}
 			else {

@@ -20,7 +20,6 @@ import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
 import java.util.Collection;
 
-import org.springframework.cloud.function.cloudevent.CloudEventMessageUtils;
 import org.springframework.cloud.function.json.JsonMapper;
 import org.springframework.lang.Nullable;
 import org.springframework.messaging.Message;
@@ -28,6 +27,8 @@ import org.springframework.messaging.MessageHeaders;
 import org.springframework.messaging.converter.AbstractMessageConverter;
 import org.springframework.messaging.converter.MessageConverter;
 import org.springframework.util.MimeType;
+
+import io.cloudevents.spring.core.CloudEventAttributeUtils;
 
 /**
  * Implementation of {@link MessageConverter} which uses Jackson or Gson libraries to do the
@@ -43,8 +44,8 @@ public class JsonMessageConverter extends AbstractMessageConverter {
 	private final JsonMapper jsonMapper;
 
 	public JsonMessageConverter(JsonMapper jsonMapper) {
-		this(jsonMapper, new MimeType("application", "json"), new MimeType(CloudEventMessageUtils.APPLICATION_CLOUDEVENTS.getType(),
-				CloudEventMessageUtils.APPLICATION_CLOUDEVENTS.getSubtype() + "+json"));
+		this(jsonMapper, new MimeType("application", "json"), new MimeType(CloudEventAttributeUtils.APPLICATION_CLOUDEVENTS.getType(),
+				CloudEventAttributeUtils.APPLICATION_CLOUDEVENTS.getSubtype() + "+json"));
 	}
 
 	public JsonMessageConverter(JsonMapper jsonMapper, MimeType... supportedMimeTypes) {

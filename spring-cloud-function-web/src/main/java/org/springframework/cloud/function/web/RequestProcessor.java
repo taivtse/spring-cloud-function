@@ -33,7 +33,6 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.cloud.function.cloudevent.CloudEventMessageUtils;
 import org.springframework.cloud.function.context.catalog.FunctionTypeUtils;
 import org.springframework.cloud.function.context.catalog.SimpleFunctionRegistry.FunctionInvocationWrapper;
 import org.springframework.cloud.function.context.message.MessageUtils;
@@ -49,6 +48,8 @@ import org.springframework.http.codec.ServerCodecConfigurer;
 import org.springframework.messaging.Message;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
+
+import io.cloudevents.spring.core.CloudEventAttributeUtils;
 
 /**
  * @author Dave Syer
@@ -218,10 +219,10 @@ public class RequestProcessor {
 	}
 
 	private boolean isValidCloudEvent(Set<String> headerKeys) {
-		return headerKeys.contains(CloudEventMessageUtils.HTTP_ATTR_PREFIX + CloudEventMessageUtils.ID)
-			&& headerKeys.contains(CloudEventMessageUtils.HTTP_ATTR_PREFIX + CloudEventMessageUtils.SOURCE)
-			&& headerKeys.contains(CloudEventMessageUtils.HTTP_ATTR_PREFIX + CloudEventMessageUtils.TYPE)
-			&& headerKeys.contains(CloudEventMessageUtils.HTTP_ATTR_PREFIX + CloudEventMessageUtils.SPECVERSION);
+		return headerKeys.contains(CloudEventAttributeUtils.HTTP_ATTR_PREFIX + CloudEventAttributeUtils.ID)
+			&& headerKeys.contains(CloudEventAttributeUtils.HTTP_ATTR_PREFIX + CloudEventAttributeUtils.SOURCE)
+			&& headerKeys.contains(CloudEventAttributeUtils.HTTP_ATTR_PREFIX + CloudEventAttributeUtils.TYPE)
+			&& headerKeys.contains(CloudEventAttributeUtils.HTTP_ATTR_PREFIX + CloudEventAttributeUtils.SPECVERSION);
 	}
 
 	// this seem to be very relevant to AWS container tests

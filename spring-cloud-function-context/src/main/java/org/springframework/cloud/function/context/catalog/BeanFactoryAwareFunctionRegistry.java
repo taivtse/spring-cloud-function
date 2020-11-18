@@ -18,8 +18,11 @@ package org.springframework.cloud.function.context.catalog;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Type;
+import java.net.URI;
 import java.util.Arrays;
+import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -33,9 +36,6 @@ import org.springframework.beans.BeansException;
 import org.springframework.beans.factory.BeanFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.BeanFactoryAnnotationUtils;
-import org.springframework.cloud.function.cloudevent.CloudEventAttributes;
-import org.springframework.cloud.function.cloudevent.CloudEventAttributesProvider;
-import org.springframework.cloud.function.cloudevent.CloudEventMessageUtils;
 import org.springframework.cloud.function.context.FunctionProperties;
 import org.springframework.cloud.function.context.FunctionRegistration;
 import org.springframework.cloud.function.context.FunctionRegistry;
@@ -49,6 +49,11 @@ import org.springframework.messaging.Message;
 import org.springframework.messaging.converter.CompositeMessageConverter;
 import org.springframework.messaging.support.MessageBuilder;
 import org.springframework.util.StringUtils;
+
+import io.cloudevents.CloudEventAttributes;
+import io.cloudevents.spring.core.CloudEventAttributeUtils;
+import io.cloudevents.spring.core.CloudEventAttributesProvider;
+import io.cloudevents.spring.core.MutableCloudEventAttributes;
 
 /**
  * Implementation of {@link FunctionRegistry} capable of discovering functioins in {@link BeanFactory}.
@@ -165,15 +170,32 @@ public class BeanFactoryAwareFunctionRegistry extends SimpleFunctionRegistry imp
 			BiFunction<Message<?>, Object, Message<?>> invocationResultHeaderEnricher = new BiFunction<Message<?>, Object, Message<?>>() {
 				@Override
 				public Message<?> apply(Message<?> inputMessage, Object invocationResult) {
-					// TODO: Factor it out! Cloud Events specific code
-					CloudEventAttributes generatedCeHeaders = CloudEventMessageUtils
-							.generateAttributes(inputMessage, invocationResult.getClass().getName(), getApplicationName());
-					CloudEventAttributes attributes = new CloudEventAttributes(generatedCeHeaders, CloudEventMessageUtils.determinePrefixToUse(inputMessage.getHeaders()));
-					if (cloudEventAtttributesProvider != null) {
-						cloudEventAtttributesProvider.generateDefaultCloudEventHeaders(attributes);
+					MutableCloudEventAttributes mutableAttributes = CloudEventAttributeUtils.toAttributes(inputMessage.getHeaders());
+					mutableAttributes.setId(UUID.randomUUID().toString());
+					mutableAttributes.setSource(URI.create("http://spring.io/" + getApplicationName()));
+					mutableAttributes.setType(invocationResult.getClass().getName());
+
+					if (cloudEventAtttributesProvider == null) {
+						cloudEventAtttributesProvider = new CloudEventAttributesProvider() {
+
+							@Override
+							public CloudEventAttributes getOutputAttributes(CloudEventAttributes attributes) {
+								if (attributes instanceof MutableCloudEventAttributes) {
+									return ((MutableCloudEventAttributes)attributes)
+										.setId(UUID.randomUUID().toString())
+										.setSource(URI.create("http://spring.io/" + getApplicationName()))
+										.setType(invocationResult.getClass().getName());
+								}
+								return attributes;
+							}
+						};
 					}
+					String prefix = determinePrefixToUse(inputMessage.getHeaders());
+
+					CloudEventAttributes generatedAttributes = cloudEventAtttributesProvider.getOutputAttributes(mutableAttributes);
+
 					Message message = MessageBuilder.withPayload(invocationResult)
-							.copyHeaders(attributes)
+							.copyHeaders(((MutableCloudEventAttributes) generatedAttributes).toMap(prefix))
 							.build();
 
 					return message;
@@ -185,10 +207,20 @@ public class BeanFactoryAwareFunctionRegistry extends SimpleFunctionRegistry imp
 		return (T) function;
 	}
 
+	private String determinePrefixToUse(Map<String, Object> messageHeaders) {
+		Set<String> keys = messageHeaders.keySet();
+		if (keys.contains("user-agent")) {
+			return CloudEventAttributeUtils.HTTP_ATTR_PREFIX;
+		}
+		else {
+			return CloudEventAttributeUtils.DEFAULT_ATTR_PREFIX;
+		}
+	}
+
 	private String getApplicationName() {
 		ConfigurableEnvironment environment = this.applicationContext.getEnvironment();
 		String name = environment.getProperty("spring.application.name");
-		return "http://spring.io/" + (StringUtils.hasText(name) ? name : "application-" + this.applicationContext.getId());
+		return (StringUtils.hasText(name) ? name : "application-" + this.applicationContext.getId());
 	}
 
 	private Object discoverFunctionInBeanFactory(String functionName) {
