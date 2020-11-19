@@ -21,7 +21,6 @@ import java.util.function.Function;
 
 import io.cloudevents.spring.core.CloudEventAttributeUtils;
 import io.cloudevents.spring.core.MutableCloudEventAttributes;
-
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
