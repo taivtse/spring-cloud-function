@@ -39,7 +39,6 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationContextAware;
 import org.springframework.context.support.GenericApplicationContext;
 import org.springframework.core.convert.ConversionService;
-import org.springframework.core.env.ConfigurableEnvironment;
 import org.springframework.messaging.converter.CompositeMessageConverter;
 import org.springframework.util.StringUtils;
 
@@ -150,71 +149,7 @@ public class BeanFactoryAwareFunctionRegistry extends SimpleFunctionRegistry imp
 			function = super.doLookup(type, functionDefinition, expectedOutputMimeTypes);
 		}
 
-		if (function != null) {
-//			BiFunction<Message<?>, Object, Message<?>> invocationResultHeaderEnricher = new BiFunction<Message<?>, Object, Message<?>>() {
-//				@Override
-//				public Message<?> apply(Message<?> inputMessage, Object invocationResult) {
-//					CloudEventAttributes mutableAttributes = CloudEventAttributeUtils.toAttributes(inputMessage.getHeaders());
-//					String prefix = "";
-//					if (((MutableCloudEventAttributes) mutableAttributes).isValidCloudEvent()) {
-//						((MutableCloudEventAttributes) mutableAttributes).setId(UUID.randomUUID().toString());
-//						((MutableCloudEventAttributes) mutableAttributes).setSource(URI.create("http://spring.io/" + getApplicationName()));
-//						((MutableCloudEventAttributes) mutableAttributes).setType(invocationResult.getClass().getName());
-//
-//						if (cloudEventAtttributesProvider == null) {
-//							cloudEventAtttributesProvider = new CloudEventAttributesProvider() {
-//
-//								@Override
-//								public CloudEventAttributes getOutputAttributes(CloudEventAttributes attributes) {
-//									if (attributes instanceof MutableCloudEventAttributes) {
-//										return ((MutableCloudEventAttributes) attributes)
-//											.setId(UUID.randomUUID().toString())
-//											.setSource(URI.create("http://spring.io/" + getApplicationName()))
-//											.setType(invocationResult.getClass().getName());
-//									}
-//									return attributes;
-//								}
-//							};
-//						}
-//						prefix = determinePrefixToUse(inputMessage.getHeaders());
-//					}
-//
-//
-//					if (cloudEventAtttributesProvider != null) {
-//						mutableAttributes = cloudEventAtttributesProvider.getOutputAttributes(mutableAttributes);
-//					}
-//
-//
-//					Message message = MessageBuilder.withPayload(invocationResult)
-//							.copyHeaders(((MutableCloudEventAttributes) mutableAttributes).toMap(prefix))
-//							.build();
-//
-//					return message;
-//				}
-//			};
-			if (this.functionCloudEventsHelper != null) {
-				function.setOutputMessageHeaderEnricher(this.functionCloudEventsHelper.getOutputHeaderEnricher());
-			}
-
-		}
-
 		return (T) function;
-	}
-
-//	private String determinePrefixToUse(Map<String, Object> messageHeaders) {
-//		Set<String> keys = messageHeaders.keySet();
-//		if (keys.contains("user-agent")) {
-//			return CloudEventAttributeUtils.HTTP_ATTR_PREFIX;
-//		}
-//		else {
-//			return CloudEventAttributeUtils.DEFAULT_ATTR_PREFIX;
-//		}
-//	}
-
-	private String getApplicationName() {
-		ConfigurableEnvironment environment = this.applicationContext.getEnvironment();
-		String name = environment.getProperty("spring.application.name");
-		return (StringUtils.hasText(name) ? name : "application-" + this.applicationContext.getId());
 	}
 
 	private Object discoverFunctionInBeanFactory(String functionName) {

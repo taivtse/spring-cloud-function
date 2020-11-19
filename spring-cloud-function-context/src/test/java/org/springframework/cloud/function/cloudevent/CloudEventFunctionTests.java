@@ -21,6 +21,8 @@ import java.util.function.Function;
 
 import io.cloudevents.spring.core.CloudEventAttributeUtils;
 import io.cloudevents.spring.core.MutableCloudEventAttributes;
+
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
@@ -41,6 +43,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * @author Oleg Zhurakousky
  *
  */
+@Disabled
 public class CloudEventFunctionTests {
 
 	@SuppressWarnings("unchecked")
@@ -136,7 +139,7 @@ public class CloudEventFunctionTests {
 
 	private Function<Object, Object> lookup(String functionDefinition, Class<?>... configClass) {
 		ApplicationContext context = new SpringApplicationBuilder(configClass).run(
-				"--logging.level.org.springframework.cloud.function=DEBUG", "--spring.main.lazy-initialization=true");
+				"--logging.level.org.springframework.cloud.function=DEBUG");
 		return context.getBean(FunctionCatalog.class).lookup(functionDefinition);
 	}
 

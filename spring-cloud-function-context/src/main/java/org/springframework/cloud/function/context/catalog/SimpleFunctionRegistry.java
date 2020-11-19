@@ -31,7 +31,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
-import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -51,6 +50,7 @@ import org.springframework.cloud.function.context.FunctionProperties;
 import org.springframework.cloud.function.context.FunctionRegistration;
 import org.springframework.cloud.function.context.FunctionRegistry;
 import org.springframework.cloud.function.context.config.RoutingFunction;
+import org.springframework.cloud.function.core.FunctionInvocationHelper;
 import org.springframework.cloud.function.json.JsonMapper;
 import org.springframework.core.ResolvableType;
 import org.springframework.core.convert.ConversionService;
@@ -100,7 +100,7 @@ public class SimpleFunctionRegistry implements FunctionRegistry, FunctionInspect
 	private FunctionAroundWrapper functionAroundWrapper;
 
 	@Autowired(required = false)
-	FunctionCloudEventsHelper functionCloudEventsHelper;
+	FunctionInvocationHelper<Message<?>> functionInvocationHelper;
 
 	public SimpleFunctionRegistry(ConversionService conversionService, CompositeMessageConverter messageConverter, JsonMapper jsonMapper) {
 		Assert.notNull(messageConverter, "'messageConverter' must not be null");
@@ -323,11 +323,11 @@ public class SimpleFunctionRegistry implements FunctionRegistry, FunctionInspect
 		 */
 		private Function<Object, Message> enhancer;
 
-		private BiFunction<Message<?>, Object, Message<?>> outputMessageHeaderEnricher;
-
-		void setOutputMessageHeaderEnricher(BiFunction<Message<?>, Object, Message<?>> outputMessageHeaderEnricher) {
-			this.outputMessageHeaderEnricher = outputMessageHeaderEnricher;
-		}
+//		private BiFunction<Message<?>, Object, Message<?>> outputMessageHeaderEnricher;
+//
+//		void setOutputMessageHeaderEnricher(BiFunction<Message<?>, Object, Message<?>> outputMessageHeaderEnricher) {
+//			this.outputMessageHeaderEnricher = outputMessageHeaderEnricher;
+//		}
 
 		FunctionInvocationWrapper(FunctionInvocationWrapper function) {
 			this.target = function.target;
@@ -624,8 +624,8 @@ public class SimpleFunctionRegistry implements FunctionRegistry, FunctionInspect
 					this.sanitizeHeaders(((Message) input).getHeaders()).forEach((k, v) -> headersMap.putIfAbsent(k, v));
 				}
 				else {
-					if (this.outputMessageHeaderEnricher != null) {
-						result = this.outputMessageHeaderEnricher.apply((Message<?>) input, result);
+					if (functionInvocationHelper != null) {
+						result = functionInvocationHelper.postProcessResult((Message<?>) input, result);
 					}
 					else {
 						result = MessageBuilder.withPayload(result).copyHeaders(this.sanitizeHeaders(((Message) input).getHeaders())).build();
@@ -824,8 +824,8 @@ public class SimpleFunctionRegistry implements FunctionRegistry, FunctionInspect
 					return null;
 				}
 
-				if (functionCloudEventsHelper != null) {
-					input = functionCloudEventsHelper.postProcessInputMessage((Message<?>) input, messageConverter);
+				if (functionInvocationHelper != null) {
+					input = functionInvocationHelper.preProcessInput((Message<?>) input, messageConverter);
 				}
 
 				convertedInput = this.convertInputMessageIfNecessary((Message) input, type);
@@ -913,7 +913,7 @@ public class SimpleFunctionRegistry implements FunctionRegistry, FunctionInspect
 		 * case that requires it since it may contain forwarding url
 		 */
 		private boolean containsRetainMessageSignalInHeaders(Message message) {
-			if (functionCloudEventsHelper != null && functionCloudEventsHelper.isCloudEvent(message.getHeaders())) {
+			if (functionInvocationHelper != null && functionInvocationHelper.isRetainOuputAsMessage(message.getHeaders())) {
 				return true;
 			}
 			else {

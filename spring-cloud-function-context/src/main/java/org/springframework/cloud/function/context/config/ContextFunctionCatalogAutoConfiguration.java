@@ -27,7 +27,6 @@ import java.util.stream.Collectors;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.gson.Gson;
 
-import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -35,7 +34,6 @@ import org.springframework.cloud.function.context.FunctionCatalog;
 import org.springframework.cloud.function.context.FunctionProperties;
 import org.springframework.cloud.function.context.FunctionRegistry;
 import org.springframework.cloud.function.context.catalog.BeanFactoryAwareFunctionRegistry;
-import org.springframework.cloud.function.context.catalog.FunctionCloudEventsHelper;
 import org.springframework.cloud.function.json.GsonMapper;
 import org.springframework.cloud.function.json.JacksonMapper;
 import org.springframework.cloud.function.json.JsonMapper;
@@ -71,12 +69,6 @@ import org.springframework.util.StringUtils;
 public class ContextFunctionCatalogAutoConfiguration {
 
 	static final String PREFERRED_MAPPER_PROPERTY = "spring.http.converters.preferred-json-mapper";
-
-	@Bean
-	@ConditionalOnClass(name = "io.cloudevents.CloudEventAttributes")
-	public FunctionCloudEventsHelper cloudEventsHelper() {
-		return new FunctionCloudEventsHelper();
-	}
 
 	@Bean
 	public FunctionRegistry functionCatalog(List<MessageConverter> messageConverters, JsonMapper jsonMapper, ConfigurableApplicationContext context) {
