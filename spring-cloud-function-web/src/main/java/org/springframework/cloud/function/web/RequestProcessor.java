@@ -49,8 +49,6 @@ import org.springframework.messaging.Message;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 
-import io.cloudevents.spring.core.CloudEventAttributeUtils;
-
 /**
  * @author Dave Syer
  * @author Oleg Zhurakousky
@@ -219,10 +217,10 @@ public class RequestProcessor {
 	}
 
 	private boolean isValidCloudEvent(Set<String> headerKeys) {
-		return headerKeys.contains(CloudEventAttributeUtils.HTTP_ATTR_PREFIX + CloudEventAttributeUtils.ID)
-			&& headerKeys.contains(CloudEventAttributeUtils.HTTP_ATTR_PREFIX + CloudEventAttributeUtils.SOURCE)
-			&& headerKeys.contains(CloudEventAttributeUtils.HTTP_ATTR_PREFIX + CloudEventAttributeUtils.TYPE)
-			&& headerKeys.contains(CloudEventAttributeUtils.HTTP_ATTR_PREFIX + CloudEventAttributeUtils.SPECVERSION);
+		return headerKeys.contains("ce-id")
+			&& headerKeys.contains("ce-source")
+			&& headerKeys.contains("ce-type")
+			&& headerKeys.contains("ce-specversion");
 	}
 
 	// this seem to be very relevant to AWS container tests

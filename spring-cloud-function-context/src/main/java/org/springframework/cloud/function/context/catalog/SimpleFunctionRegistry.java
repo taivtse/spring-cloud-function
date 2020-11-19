@@ -67,9 +67,6 @@ import org.springframework.util.ObjectUtils;
 import org.springframework.util.ReflectionUtils;
 import org.springframework.util.StringUtils;
 
-import io.cloudevents.spring.core.CloudEventAttributeUtils;
-import io.cloudevents.spring.messaging.CloudEventMessageUtils;
-
 
 /**
  * Implementation of {@link FunctionCatalog} and {@link FunctionRegistry} which
@@ -101,6 +98,9 @@ public class SimpleFunctionRegistry implements FunctionRegistry, FunctionInspect
 
 	@Autowired(required = false)
 	private FunctionAroundWrapper functionAroundWrapper;
+
+	@Autowired(required = false)
+	FunctionCloudEventsHelper functionCloudEventsHelper;
 
 	public SimpleFunctionRegistry(ConversionService conversionService, CompositeMessageConverter messageConverter, JsonMapper jsonMapper) {
 		Assert.notNull(messageConverter, "'messageConverter' must not be null");
@@ -824,7 +824,9 @@ public class SimpleFunctionRegistry implements FunctionRegistry, FunctionInspect
 					return null;
 				}
 
-				input = CloudEventMessageUtils.toBinary((Message<?>) input, messageConverter);
+				if (functionCloudEventsHelper != null) {
+					input = functionCloudEventsHelper.postProcessInputMessage((Message<?>) input, messageConverter);
+				}
 
 				convertedInput = this.convertInputMessageIfNecessary((Message) input, type);
 				if (convertedInput == null) { // give ConversionService a chance
@@ -911,7 +913,7 @@ public class SimpleFunctionRegistry implements FunctionRegistry, FunctionInspect
 		 * case that requires it since it may contain forwarding url
 		 */
 		private boolean containsRetainMessageSignalInHeaders(Message message) {
-			if (CloudEventAttributeUtils.toAttributes(message.getHeaders()).isValidCloudEvent()) {
+			if (functionCloudEventsHelper != null && functionCloudEventsHelper.isCloudEvent(message.getHeaders())) {
 				return true;
 			}
 			else {

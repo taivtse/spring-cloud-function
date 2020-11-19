@@ -16,10 +16,11 @@
 
 package org.springframework.cloud.function.cloudevent;
 
-import java.net.URI;
 import java.text.SimpleDateFormat;
 import java.util.function.Function;
 
+import io.cloudevents.spring.core.CloudEventAttributeUtils;
+import io.cloudevents.spring.core.MutableCloudEventAttributes;
 import org.junit.jupiter.api.Test;
 
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
@@ -32,8 +33,6 @@ import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageHeaders;
 import org.springframework.messaging.support.MessageBuilder;
 
-import io.cloudevents.spring.core.CloudEventAttributeUtils;
-import io.cloudevents.spring.core.MutableCloudEventAttributes;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

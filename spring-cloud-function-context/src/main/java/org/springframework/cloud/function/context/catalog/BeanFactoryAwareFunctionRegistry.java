@@ -18,12 +18,8 @@ package org.springframework.cloud.function.context.catalog;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Type;
-import java.net.URI;
 import java.util.Arrays;
-import java.util.Map;
 import java.util.Set;
-import java.util.UUID;
-import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -34,7 +30,6 @@ import org.aopalliance.intercept.MethodInvocation;
 import org.springframework.aop.framework.ProxyFactory;
 import org.springframework.beans.BeansException;
 import org.springframework.beans.factory.BeanFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.BeanFactoryAnnotationUtils;
 import org.springframework.cloud.function.context.FunctionProperties;
 import org.springframework.cloud.function.context.FunctionRegistration;
@@ -45,15 +40,8 @@ import org.springframework.context.ApplicationContextAware;
 import org.springframework.context.support.GenericApplicationContext;
 import org.springframework.core.convert.ConversionService;
 import org.springframework.core.env.ConfigurableEnvironment;
-import org.springframework.messaging.Message;
 import org.springframework.messaging.converter.CompositeMessageConverter;
-import org.springframework.messaging.support.MessageBuilder;
 import org.springframework.util.StringUtils;
-
-import io.cloudevents.CloudEventAttributes;
-import io.cloudevents.spring.core.CloudEventAttributeUtils;
-import io.cloudevents.spring.core.CloudEventAttributesProvider;
-import io.cloudevents.spring.core.MutableCloudEventAttributes;
 
 /**
  * Implementation of {@link FunctionRegistry} capable of discovering functioins in {@link BeanFactory}.
@@ -63,10 +51,6 @@ import io.cloudevents.spring.core.MutableCloudEventAttributes;
 public class BeanFactoryAwareFunctionRegistry extends SimpleFunctionRegistry implements ApplicationContextAware {
 
 	private GenericApplicationContext applicationContext;
-
-	@Autowired(required = false)
-	private CloudEventAttributesProvider cloudEventAtttributesProvider;
-
 
 	public BeanFactoryAwareFunctionRegistry(ConversionService conversionService, CompositeMessageConverter messageConverter, JsonMapper jsonMapper) {
 		super(conversionService, messageConverter, jsonMapper);
@@ -167,55 +151,65 @@ public class BeanFactoryAwareFunctionRegistry extends SimpleFunctionRegistry imp
 		}
 
 		if (function != null) {
-			BiFunction<Message<?>, Object, Message<?>> invocationResultHeaderEnricher = new BiFunction<Message<?>, Object, Message<?>>() {
-				@Override
-				public Message<?> apply(Message<?> inputMessage, Object invocationResult) {
-					MutableCloudEventAttributes mutableAttributes = CloudEventAttributeUtils.toAttributes(inputMessage.getHeaders());
-					mutableAttributes.setId(UUID.randomUUID().toString());
-					mutableAttributes.setSource(URI.create("http://spring.io/" + getApplicationName()));
-					mutableAttributes.setType(invocationResult.getClass().getName());
+//			BiFunction<Message<?>, Object, Message<?>> invocationResultHeaderEnricher = new BiFunction<Message<?>, Object, Message<?>>() {
+//				@Override
+//				public Message<?> apply(Message<?> inputMessage, Object invocationResult) {
+//					CloudEventAttributes mutableAttributes = CloudEventAttributeUtils.toAttributes(inputMessage.getHeaders());
+//					String prefix = "";
+//					if (((MutableCloudEventAttributes) mutableAttributes).isValidCloudEvent()) {
+//						((MutableCloudEventAttributes) mutableAttributes).setId(UUID.randomUUID().toString());
+//						((MutableCloudEventAttributes) mutableAttributes).setSource(URI.create("http://spring.io/" + getApplicationName()));
+//						((MutableCloudEventAttributes) mutableAttributes).setType(invocationResult.getClass().getName());
+//
+//						if (cloudEventAtttributesProvider == null) {
+//							cloudEventAtttributesProvider = new CloudEventAttributesProvider() {
+//
+//								@Override
+//								public CloudEventAttributes getOutputAttributes(CloudEventAttributes attributes) {
+//									if (attributes instanceof MutableCloudEventAttributes) {
+//										return ((MutableCloudEventAttributes) attributes)
+//											.setId(UUID.randomUUID().toString())
+//											.setSource(URI.create("http://spring.io/" + getApplicationName()))
+//											.setType(invocationResult.getClass().getName());
+//									}
+//									return attributes;
+//								}
+//							};
+//						}
+//						prefix = determinePrefixToUse(inputMessage.getHeaders());
+//					}
+//
+//
+//					if (cloudEventAtttributesProvider != null) {
+//						mutableAttributes = cloudEventAtttributesProvider.getOutputAttributes(mutableAttributes);
+//					}
+//
+//
+//					Message message = MessageBuilder.withPayload(invocationResult)
+//							.copyHeaders(((MutableCloudEventAttributes) mutableAttributes).toMap(prefix))
+//							.build();
+//
+//					return message;
+//				}
+//			};
+			if (this.functionCloudEventsHelper != null) {
+				function.setOutputMessageHeaderEnricher(this.functionCloudEventsHelper.getOutputHeaderEnricher());
+			}
 
-					if (cloudEventAtttributesProvider == null) {
-						cloudEventAtttributesProvider = new CloudEventAttributesProvider() {
-
-							@Override
-							public CloudEventAttributes getOutputAttributes(CloudEventAttributes attributes) {
-								if (attributes instanceof MutableCloudEventAttributes) {
-									return ((MutableCloudEventAttributes)attributes)
-										.setId(UUID.randomUUID().toString())
-										.setSource(URI.create("http://spring.io/" + getApplicationName()))
-										.setType(invocationResult.getClass().getName());
-								}
-								return attributes;
-							}
-						};
-					}
-					String prefix = determinePrefixToUse(inputMessage.getHeaders());
-
-					CloudEventAttributes generatedAttributes = cloudEventAtttributesProvider.getOutputAttributes(mutableAttributes);
-
-					Message message = MessageBuilder.withPayload(invocationResult)
-							.copyHeaders(((MutableCloudEventAttributes) generatedAttributes).toMap(prefix))
-							.build();
-
-					return message;
-				}
-			};
-			function.setOutputMessageHeaderEnricher(invocationResultHeaderEnricher);
 		}
 
 		return (T) function;
 	}
 
-	private String determinePrefixToUse(Map<String, Object> messageHeaders) {
-		Set<String> keys = messageHeaders.keySet();
-		if (keys.contains("user-agent")) {
-			return CloudEventAttributeUtils.HTTP_ATTR_PREFIX;
-		}
-		else {
-			return CloudEventAttributeUtils.DEFAULT_ATTR_PREFIX;
-		}
-	}
+//	private String determinePrefixToUse(Map<String, Object> messageHeaders) {
+//		Set<String> keys = messageHeaders.keySet();
+//		if (keys.contains("user-agent")) {
+//			return CloudEventAttributeUtils.HTTP_ATTR_PREFIX;
+//		}
+//		else {
+//			return CloudEventAttributeUtils.DEFAULT_ATTR_PREFIX;
+//		}
+//	}
 
 	private String getApplicationName() {
 		ConfigurableEnvironment environment = this.applicationContext.getEnvironment();

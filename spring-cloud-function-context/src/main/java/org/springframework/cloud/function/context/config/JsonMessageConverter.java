@@ -28,8 +28,6 @@ import org.springframework.messaging.converter.AbstractMessageConverter;
 import org.springframework.messaging.converter.MessageConverter;
 import org.springframework.util.MimeType;
 
-import io.cloudevents.spring.core.CloudEventAttributeUtils;
-
 /**
  * Implementation of {@link MessageConverter} which uses Jackson or Gson libraries to do the
  * actual conversion via {@link JsonMapper} instance.
@@ -44,8 +42,7 @@ public class JsonMessageConverter extends AbstractMessageConverter {
 	private final JsonMapper jsonMapper;
 
 	public JsonMessageConverter(JsonMapper jsonMapper) {
-		this(jsonMapper, new MimeType("application", "json"), new MimeType(CloudEventAttributeUtils.APPLICATION_CLOUDEVENTS.getType(),
-				CloudEventAttributeUtils.APPLICATION_CLOUDEVENTS.getSubtype() + "+json"));
+		this(jsonMapper, new MimeType("application", "json"), new MimeType("application", "cloudevents+json"));
 	}
 
 	public JsonMessageConverter(JsonMapper jsonMapper, MimeType... supportedMimeTypes) {
