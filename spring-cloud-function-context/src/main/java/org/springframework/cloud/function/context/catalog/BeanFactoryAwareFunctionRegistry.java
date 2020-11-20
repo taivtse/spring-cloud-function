@@ -34,11 +34,14 @@ import org.springframework.beans.factory.annotation.BeanFactoryAnnotationUtils;
 import org.springframework.cloud.function.context.FunctionProperties;
 import org.springframework.cloud.function.context.FunctionRegistration;
 import org.springframework.cloud.function.context.FunctionRegistry;
+import org.springframework.cloud.function.core.FunctionInvocationHelper;
 import org.springframework.cloud.function.json.JsonMapper;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationContextAware;
 import org.springframework.context.support.GenericApplicationContext;
 import org.springframework.core.convert.ConversionService;
+import org.springframework.lang.Nullable;
+import org.springframework.messaging.Message;
 import org.springframework.messaging.converter.CompositeMessageConverter;
 import org.springframework.util.StringUtils;
 
@@ -51,8 +54,9 @@ public class BeanFactoryAwareFunctionRegistry extends SimpleFunctionRegistry imp
 
 	private GenericApplicationContext applicationContext;
 
-	public BeanFactoryAwareFunctionRegistry(ConversionService conversionService, CompositeMessageConverter messageConverter, JsonMapper jsonMapper) {
-		super(conversionService, messageConverter, jsonMapper);
+	public BeanFactoryAwareFunctionRegistry(ConversionService conversionService, CompositeMessageConverter messageConverter, JsonMapper jsonMapper,
+			@Nullable FunctionInvocationHelper<Message<?>> functionInvocationHelper) {
+		super(conversionService, messageConverter, jsonMapper, functionInvocationHelper);
 	}
 
 	@Override

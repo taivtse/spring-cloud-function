@@ -96,13 +96,13 @@ public class SimpleFunctionRegistry implements FunctionRegistry, FunctionInspect
 
 	private final JsonMapper jsonMapper;
 
+	private final FunctionInvocationHelper<Message<?>> functionInvocationHelper;
+
 	@Autowired(required = false)
 	private FunctionAroundWrapper functionAroundWrapper;
 
-	@Autowired(required = false)
-	FunctionInvocationHelper<Message<?>> functionInvocationHelper;
-
-	public SimpleFunctionRegistry(ConversionService conversionService, CompositeMessageConverter messageConverter, JsonMapper jsonMapper) {
+	public SimpleFunctionRegistry(ConversionService conversionService, CompositeMessageConverter messageConverter, JsonMapper jsonMapper,
+			@Nullable FunctionInvocationHelper<Message<?>> functionInvocationHelper) {
 		Assert.notNull(messageConverter, "'messageConverter' must not be null");
 		Assert.notNull(jsonMapper, "'jsonMapper' must not be null");
 		this.conversionService = conversionService;
@@ -110,6 +110,11 @@ public class SimpleFunctionRegistry implements FunctionRegistry, FunctionInspect
 		this.messageConverter = messageConverter;
 		this.headersField = ReflectionUtils.findField(MessageHeaders.class, "headers");
 		this.headersField.setAccessible(true);
+		this.functionInvocationHelper = functionInvocationHelper;
+	}
+
+	public SimpleFunctionRegistry(ConversionService conversionService, CompositeMessageConverter messageConverter, JsonMapper jsonMapper) {
+		this(conversionService, messageConverter, jsonMapper, null);
 	}
 
 	@SuppressWarnings("unchecked")
